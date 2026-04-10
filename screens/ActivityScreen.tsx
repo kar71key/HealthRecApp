@@ -1,0 +1,183 @@
+import React, { useMemo } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+
+import { AppCard } from '../components/AppCard';
+import { ProgressBar } from '../components/ProgressBar';
+import { ScreenShell } from '../components/ScreenShell';
+import { WeeklyStepsChart } from '../components/WeeklyStepsChart';
+import { useHealthData } from '../context/HealthDataContext';
+import { colors } from '../theme/colors';
+
+export function ActivityScreen(): React.JSX.Element {
+  const {
+    stepsToday,
+    stepGoal,
+    stepProgress,
+    stepStatus,
+    stepStatusMessage,
+    weeklySteps,
+  } = useHealthData();
+
+  const fallbackVisible =
+    stepStatus === 'denied' ||
+    stepStatus === 'unavailable' ||
+    stepStatus === 'error';
+
+  const latestStepPoint = weeklySteps[weeklySteps.length - 1];
+
+  const displaySteps = useMemo(() => {
+    if (stepStatus === 'granted') {
+      return stepsToday;
+    }
+    return latestStepPoint?.steps ?? 0;
+  }, [latestStepPoint?.steps, stepStatus, stepsToday]);
+
+  const displayProgress = useMemo(() => {
+    if (stepStatus === 'granted') {
+      return stepProgress;
+    }
+    if (stepGoal <= 0) {
+      return 0;
+    }
+    return Math.min(displaySteps / stepGoal, 1);
+  }, [displaySteps, stepGoal, stepProgress, stepStatus]);
+
+  const weeklyAverage = useMemo(() => {
+    if (weeklySteps.length === 0) {
+      return 0;
+    }
+    return Math.round(
+      weeklySteps.reduce((sum, point) => sum + point.steps, 0) / weeklySteps.length,
+    );
+  }, [weeklySteps]);
+
+  const bestDay = useMemo(() => {
+    if (weeklySteps.length === 0) {
+      return null;
+    }
+    return weeklySteps.reduce((top, point) =>
+      point.steps > top.steps ? point : top,
+    );
+  }, [weeklySteps]);
+
+  const goalHitDays = useMemo(
+    () => weeklySteps.filter(point => point.steps >= stepGoal).length,
+    [stepGoal, weeklySteps],
+  );
+
+  return (
+    <ScreenShell
+      title="Activity"
+      subtitle="Live step tracking and weekly movement trend."
+    >
+      <AppCard title="Today's Steps">
+        <Text style={styles.stepsValue}>{displaySteps.toLocaleString()}</Text>
+        <Text style={styles.goalCopy}>
+          Goal: {stepGoal.toLocaleString()} steps today
+        </Text>
+        <ProgressBar
+          progress={displayProgress}
+          caption={`${Math.round(displayProgress * 100)}% of daily goal`}
+        />
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Weekly Avg</Text>
+            <Text style={styles.summaryValue}>{weeklyAverage.toLocaleString()}</Text>
+          </View>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Goal Days</Text>
+            <Text style={styles.summaryValue}>{goalHitDays}/7</Text>
+          </View>
+        </View>
+      </AppCard>
+
+      <AppCard title="Weekly Steps">
+        <WeeklyStepsChart points={weeklySteps} />
+        <Text style={styles.chartMeta}>
+          {bestDay
+            ? `Best day: ${bestDay.day} with ${bestDay.steps.toLocaleString()} steps`
+            : 'No weekly step history available yet.'}
+        </Text>
+      </AppCard>
+
+      <AppCard title="Sensor Status">
+        <Text style={styles.statusText}>{stepStatusMessage}</Text>
+        {fallbackVisible ? (
+          <View style={styles.fallbackBox}>
+            <Text style={styles.fallbackTitle}>Fallback Active</Text>
+            <Text style={styles.fallbackText}>
+              Live pedometer data is not available right now, so this tab is
+              showing the locally stored mock week of daily steps instead.
+            </Text>
+          </View>
+        ) : null}
+      </AppCard>
+    </ScreenShell>
+  );
+}
+
+const styles = StyleSheet.create({
+  stepsValue: {
+    fontSize: 44,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  goalCopy: {
+    marginTop: 6,
+    marginBottom: 12,
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  summaryCard: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    padding: 12,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: 6,
+  },
+  summaryValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  chartMeta: {
+    marginTop: 12,
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  statusText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  fallbackBox: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FFE1B4',
+    backgroundColor: '#FFF8ED',
+  },
+  fallbackTitle: {
+    color: '#8C5A0E',
+    fontWeight: '700',
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  fallbackText: {
+    color: '#8C5A0E',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+});
