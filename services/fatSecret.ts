@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { encode as encodeBase64 } from 'base-64';
 
 import type { ParsedFoodRecognition, StoredNutritionScan } from '../types/nutri';
 import { APP_SECRETS } from './appSecrets';
@@ -81,6 +80,30 @@ function getMacroValue(
   return parseNumber(nutrition[key]);
 }
 
+function encodeAsciiToBase64(input: string): string {
+  const alphabet =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let output = '';
+  let index = 0;
+
+  while (index < input.length) {
+    const byte1 = input.charCodeAt(index++) & 0xff;
+    const hasByte2 = index < input.length;
+    const byte2 = hasByte2 ? input.charCodeAt(index++) & 0xff : 0;
+    const hasByte3 = index < input.length;
+    const byte3 = hasByte3 ? input.charCodeAt(index++) & 0xff : 0;
+
+    const chunk = (byte1 << 16) | (byte2 << 8) | byte3;
+
+    output += alphabet[(chunk >> 18) & 63];
+    output += alphabet[(chunk >> 12) & 63];
+    output += hasByte2 ? alphabet[(chunk >> 6) & 63] : '=';
+    output += hasByte3 ? alphabet[chunk & 63] : '=';
+  }
+
+  return output;
+}
+
 async function getCachedToken(): Promise<string | null> {
   try {
     const storedValue = await AsyncStorage.getItem(TOKEN_STORAGE_KEY);
@@ -119,7 +142,7 @@ async function getAccessToken(): Promise<string> {
     return cachedToken;
   }
 
-  const credentials = encodeBase64(
+  const credentials = encodeAsciiToBase64(
     `${FATSECRET_CLIENT_ID}:${FATSECRET_CLIENT_SECRET}`,
   );
   const response = await fetch(TOKEN_URL, {

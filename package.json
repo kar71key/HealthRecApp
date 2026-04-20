@@ -17,7 +17,6 @@
     "@react-navigation/native": "^7.1.28",
     "@react-navigation/native-stack": "^7.13.0",
     "@supabase/supabase-js": "^2.102.1",
-    "base-64": "^1.0.0",
     "hoist-non-react-statics": "^3.3.2",
     "react": "19.2.3",
     "react-native": "0.84.0",

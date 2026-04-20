@@ -35,6 +35,13 @@ class StepCounterModule(
 
   @ReactMethod
   fun startService(promise: Promise) {
+    if (!StepCounterStore.hasStepCounterSensor(reactContext)) {
+      StepCounterStore.markSensorAvailability(reactContext, false)
+      StepCounterStore.markServiceRunning(reactContext, false)
+      promise.resolve(StepCounterStore.toWritableMap(StepCounterStore.ensureCurrentSession(reactContext)))
+      return
+    }
+
     if (!StepCounterStore.hasActivityPermission(reactContext)) {
       promise.reject(
         "ACTIVITY_PERMISSION_DENIED",

@@ -75,6 +75,9 @@ yarn-error.log
 /proj.zip
 /hermesc.tar.gz
 /release_error_logs.txt
+/emulator_screen.png
+/emulator_screen2.png
+/healthrecapp_after_fix.png
 
 # Yarn
 .yarn/*

@@ -102,6 +102,30 @@ export function useStepCounter(goal: number): UseStepCounterResult {
         return;
       }
 
+      let snapshot: AndroidStepCounterSnapshot;
+      try {
+        snapshot = await getAndroidStepCounterSnapshot();
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+        setStatus('error');
+        setStatusMessage('Unable to read the Android step counter status.');
+        return;
+      }
+
+      if (!snapshot.sensorAvailable) {
+        if (!isMounted) {
+          return;
+        }
+        activeDayKey.current = snapshot.sessionDate;
+        setStepsToday(snapshot.stepCount);
+        const nextStatus = getStatusFromSnapshot(snapshot);
+        setStatus(nextStatus.status);
+        setStatusMessage(nextStatus.statusMessage);
+        return;
+      }
+
       const granted = await requestActivityPermission();
       if (!granted) {
         if (!isMounted) {

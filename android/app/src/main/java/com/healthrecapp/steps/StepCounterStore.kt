@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorManager
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.ContextCompat
@@ -47,6 +49,11 @@ object StepCounterStore {
       0
     }
 
+  fun hasStepCounterSensor(context: Context): Boolean {
+    val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+    return sensorManager?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null
+  }
+
   fun hasActivityPermission(context: Context): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
       return true
@@ -69,6 +76,7 @@ object StepCounterStore {
   fun ensureCurrentSession(context: Context): StepCounterSnapshot {
     val prefs = getPrefs(context)
     val today = getTodayKey()
+    val sensorAvailable = hasStepCounterSensor(context)
     val sessionDate = prefs.getString(KEY_SESSION_DATE, null)
     if (sessionDate != today) {
       val storedBootCount = prefs.getInt(KEY_BOOT_COUNT, getBootCount(context))
@@ -89,7 +97,10 @@ object StepCounterStore {
         .putInt(KEY_BOOT_COUNT, currentBootCount)
         .putLong(KEY_SESSION_STARTED_AT, now)
         .putLong(KEY_LAST_UPDATED_AT, now)
+        .putBoolean(KEY_SENSOR_AVAILABLE, sensorAvailable)
         .apply()
+    } else if (prefs.getBoolean(KEY_SENSOR_AVAILABLE, sensorAvailable) != sensorAvailable) {
+      prefs.edit().putBoolean(KEY_SENSOR_AVAILABLE, sensorAvailable).apply()
     }
 
     return getSnapshot(context)
@@ -156,13 +167,14 @@ object StepCounterStore {
   fun getSnapshot(context: Context): StepCounterSnapshot {
     val prefs = getPrefs(context)
     val now = System.currentTimeMillis()
+    val sensorAvailable = hasStepCounterSensor(context)
     return StepCounterSnapshot(
       stepCount = prefs.getInt(KEY_CURRENT_STEP_COUNT, 0),
       sessionDate = prefs.getString(KEY_SESSION_DATE, getTodayKey()) ?: getTodayKey(),
       sessionStartedAt = prefs.getLong(KEY_SESSION_STARTED_AT, now),
       lastUpdatedAt = prefs.getLong(KEY_LAST_UPDATED_AT, 0L),
       serviceRunning = prefs.getBoolean(KEY_SERVICE_RUNNING, false),
-      sensorAvailable = prefs.getBoolean(KEY_SENSOR_AVAILABLE, true),
+      sensorAvailable = sensorAvailable,
       permissionGranted = hasActivityPermission(context),
     )
   }
