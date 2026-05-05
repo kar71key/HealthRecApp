@@ -1,5 +1,11 @@
 import { getCurrentTimestamp, getHourFromIso } from './date';
-import type { DailyLog, FoodEntry, InsightFact, StepDailySummary } from '../types/data';
+import type {
+  DailyLog,
+  FoodEntry,
+  InsightFact,
+  PhysicalActivitySession,
+  StepDailySummary,
+} from '../types/data';
 
 const LATE_CAFFEINE_CUTOFF_HOUR = 16;
 
@@ -23,6 +29,10 @@ function toConfidence(sampleSize: number): InsightFact['confidence'] {
     return 'moderate signal';
   }
   return 'early pattern';
+}
+
+function buildInsightId(userId: string, suffix: string): string {
+  return `insight-${userId}-${suffix}`;
 }
 
 function buildHydrationInsight(userId: string, dailyLogs: DailyLog[]): InsightFact {
@@ -49,7 +59,7 @@ function buildHydrationInsight(userId: string, dailyLogs: DailyLog[]): InsightFa
       : 'Hydration is still noisy relative to sleep. Keep logging consistently before acting on this pattern.';
 
   return {
-    id: 'insight-hydration-sleep',
+    id: buildInsightId(userId, 'hydration-sleep'),
     userId,
     category: 'hydration',
     title: 'Hydration and Sleep',
@@ -128,7 +138,7 @@ function buildLateCaffeineInsight(
       : 'Keep capturing caffeine timing. The current signal does not yet justify a stronger recommendation.';
 
   return {
-    id: 'insight-late-caffeine',
+    id: buildInsightId(userId, 'late-caffeine'),
     userId,
     category: 'nutrition',
     title: 'Late Caffeine and Sleep',
@@ -147,6 +157,7 @@ function buildLateCaffeineInsight(
 function buildActivityInsight(
   userId: string,
   stepSummaries: StepDailySummary[],
+  activitySessions: PhysicalActivitySession[],
   stepGoal: number,
 ): InsightFact {
   const generatedAt = getCurrentTimestamp();
@@ -154,12 +165,24 @@ function buildActivityInsight(
   const goalDays = stepSummaries.filter(day => day.stepCount >= stepGoal);
   const goalRate = sampleSize > 0 ? (goalDays.length / sampleSize) * 100 : 0;
   const averageSteps = average(stepSummaries.map(day => day.stepCount));
+  const averageCalories = average(stepSummaries.map(day => day.caloriesBurned));
+  const totalWorkoutMinutes = activitySessions.reduce(
+    (sum, session) => sum + session.durationSeconds / 60,
+    0,
+  );
+  const workoutDayCount = new Set(activitySessions.map(session => session.localDate)).size;
   const delta = roundToSingleDecimal(averageSteps - stepGoal);
   const detail =
     sampleSize >= 14
       ? `You reached the ${stepGoal.toLocaleString()}-step goal on ${goalDays.length} of the last ${sampleSize} days. Average daily steps are ${Math.round(
           averageSteps,
-        ).toLocaleString()} with a ${Math.round(goalRate)}% goal-hit rate, which is ${Math.abs(
+        ).toLocaleString()} and average calorie burn is ${Math.round(
+          averageCalories,
+        )} kcal, with a ${Math.round(goalRate)}% goal-hit rate. Structured workouts contributed ${Math.round(
+          totalWorkoutMinutes,
+        )} minutes across ${workoutDayCount} recent day${
+          workoutDayCount === 1 ? '' : 's'
+        }. That is ${Math.abs(
           Math.round(delta),
         ).toLocaleString()} ${
           delta >= 0 ? 'above' : 'below'
@@ -172,10 +195,123 @@ function buildActivityInsight(
       : 'Add one deliberate walking block on low-activity days so the baseline moves closer to goal.';
 
   return {
-    id: 'insight-activity-consistency',
+    id: buildInsightId(userId, 'activity-consistency'),
     userId,
     category: 'activity',
     title: 'Movement Consistency',
+    detail,
+    recommendation,
+    confidence: toConfidence(sampleSize),
+    sampleSize,
+    metricDelta: delta,
+    generatedAt,
+    createdAt: generatedAt,
+    updatedAt: generatedAt,
+    syncStatus: 'pending',
+  };
+}
+
+function buildWorkoutRecoveryInsight(
+  userId: string,
+  dailyLogs: DailyLog[],
+  activitySessions: PhysicalActivitySession[],
+): InsightFact {
+  const generatedAt = getCurrentTimestamp();
+  const sampleSize = dailyLogs.length;
+  const workoutDays = new Set(activitySessions.map(session => session.localDate));
+  const logsWithWorkout = dailyLogs.filter(log => workoutDays.has(log.localDate));
+  const logsWithoutWorkout = dailyLogs.filter(log => !workoutDays.has(log.localDate));
+  const workoutSleepQuality = average(logsWithWorkout.map(log => log.sleepQuality));
+  const restSleepQuality = average(logsWithoutWorkout.map(log => log.sleepQuality));
+  const workoutSleepHours = average(logsWithWorkout.map(log => log.sleepHours));
+  const restSleepHours = average(logsWithoutWorkout.map(log => log.sleepHours));
+  const delta = roundToSingleDecimal(workoutSleepQuality - restSleepQuality);
+
+  const detail =
+    sampleSize >= 14 &&
+    logsWithWorkout.length >= 4 &&
+    logsWithoutWorkout.length >= 4
+      ? `On ${logsWithWorkout.length} workout days, sleep quality averages ${workoutSleepQuality.toFixed(
+          1,
+        )}/5 versus ${restSleepQuality.toFixed(
+          1,
+        )}/5 on non-workout days. Sleep duration shifts by ${Math.abs(
+          roundToSingleDecimal(workoutSleepHours - restSleepHours),
+        ).toFixed(1)}h.`
+      : 'Timed workouts are now part of your health record. Log at least 14 days with a mix of workout and non-workout days before leaning on recovery correlations.';
+
+  return {
+    id: buildInsightId(userId, 'workout-recovery'),
+    userId,
+    category: 'activity',
+    title: 'Workouts and Recovery',
+    detail,
+    recommendation:
+      delta >= 0
+        ? 'Keep pairing structured training with sleep logs so you can see which workout styles support recovery best.'
+        : 'If harder workout days seem to hurt recovery, compare different intensities and earlier training times over the next two weeks.',
+    confidence: toConfidence(sampleSize),
+    sampleSize,
+    metricDelta: delta,
+    generatedAt,
+    createdAt: generatedAt,
+    updatedAt: generatedAt,
+    syncStatus: 'pending',
+  };
+}
+
+function buildCalorieBurnInsight(
+  userId: string,
+  dailyLogs: DailyLog[],
+  stepSummaries: StepDailySummary[],
+): InsightFact {
+  const generatedAt = getCurrentTimestamp();
+  const sampleSize = stepSummaries.length;
+  const averageCalories = average(stepSummaries.map(day => day.caloriesBurned));
+  const highBurnDates = new Set(
+    stepSummaries
+      .filter(day => day.caloriesBurned >= averageCalories && day.caloriesBurned > 0)
+      .map(day => day.localDate),
+  );
+  const lowBurnDates = new Set(
+    stepSummaries
+      .filter(day => day.caloriesBurned < averageCalories)
+      .map(day => day.localDate),
+  );
+  const higherBurnLogs = dailyLogs.filter(log => highBurnDates.has(log.localDate));
+  const lowerBurnLogs = dailyLogs.filter(log => lowBurnDates.has(log.localDate));
+  const higherBurnSleep = average(higherBurnLogs.map(log => log.sleepQuality));
+  const lowerBurnSleep = average(lowerBurnLogs.map(log => log.sleepQuality));
+  const higherBurnSleepHours = average(higherBurnLogs.map(log => log.sleepHours));
+  const lowerBurnSleepHours = average(lowerBurnLogs.map(log => log.sleepHours));
+  const delta = roundToSingleDecimal(higherBurnSleep - lowerBurnSleep);
+
+  const detail =
+    sampleSize >= 14 &&
+    higherBurnLogs.length >= 4 &&
+    lowerBurnLogs.length >= 4 &&
+    averageCalories > 0
+      ? `On days above your average burn of ${Math.round(
+          averageCalories,
+        )} kcal, sleep quality averages ${higherBurnSleep.toFixed(
+          1,
+        )}/5 versus ${lowerBurnSleep.toFixed(1)}/5 on lighter-burn days. Sleep duration shifts by ${Math.abs(
+          roundToSingleDecimal(higherBurnSleepHours - lowerBurnSleepHours),
+        ).toFixed(1)}h.`
+      : 'Calorie-burn trends are being tracked now. Add more days with both step history and sleep logs before treating burn-versus-recovery patterns as reliable.';
+
+  const recommendation =
+    averageCalories <= 0
+      ? 'Add your weight in the profile so the app can estimate calorie burn from steps.'
+      : delta >= 0
+        ? 'Notice whether your higher-burn days also feel easier to recover from. Keep sleep and movement logs paired.'
+        : 'If higher-burn days seem to hurt recovery, spread walking more evenly across the week and compare the next two weeks.';
+
+  return {
+    id: buildInsightId(userId, 'calorie-burn-recovery'),
+    userId,
+    category: 'activity',
+    title: 'Calorie Burn and Recovery',
     detail,
     recommendation,
     confidence: toConfidence(sampleSize),
@@ -209,7 +345,7 @@ function buildSymptomsInsight(userId: string, dailyLogs: DailyLog[]): InsightFac
       : `Symptom tracking is active, but you still need more days before symptom-related trends can be trusted.`;
 
   return {
-    id: 'insight-symptoms-recovery',
+    id: buildInsightId(userId, 'symptoms-recovery'),
     userId,
     category: 'symptoms',
     title: 'Symptoms and Recovery',
@@ -231,6 +367,7 @@ export function buildInsightFacts(
   dailyLogs: DailyLog[],
   foodEntries: FoodEntry[],
   stepSummaries: StepDailySummary[],
+  activitySessions: PhysicalActivitySession[],
   stepGoal: number,
 ): InsightFact[] {
   const descendingLogs = [...dailyLogs].sort((left, right) =>
@@ -243,7 +380,9 @@ export function buildInsightFacts(
   return [
     buildHydrationInsight(userId, descendingLogs),
     buildLateCaffeineInsight(userId, descendingLogs, foodEntries),
-    buildActivityInsight(userId, ascendingSteps, stepGoal),
+    buildActivityInsight(userId, ascendingSteps, activitySessions, stepGoal),
+    buildCalorieBurnInsight(userId, descendingLogs, ascendingSteps),
+    buildWorkoutRecoveryInsight(userId, descendingLogs, activitySessions),
     buildSymptomsInsight(userId, descendingLogs),
   ];
 }

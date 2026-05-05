@@ -72,12 +72,20 @@ yarn-error.log
 
 # Local project artifacts
 /android/build_log.txt
+/android/hs_err_pid*.log
+/android/replay_pid*.log
 /proj.zip
 /hermesc.tar.gz
 /release_error_logs.txt
 /emulator_screen.png
 /emulator_screen2.png
 /healthrecapp_after_fix.png
+/Itee_Mishra_Final_Year_Thesis_Report.pdf
+/sample_thesis_layout.txt
+/sample_page-*.png
+/generate_thesis_report.py
+/HealthRec_Final_Year_Thesis_Report.docx
+/HealthRec_Final_Year_Thesis_Report.pdf
 
 # Yarn
 .yarn/*

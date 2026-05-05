@@ -68,6 +68,20 @@ class StepCounterModule(
   }
 
   @ReactMethod
+  fun pauseTracking(promise: Promise) {
+    val snapshot = StepCounterStore.pauseTracking(reactContext)
+    StepCounterBridge.emitSnapshot(snapshot)
+    promise.resolve(StepCounterStore.toWritableMap(snapshot))
+  }
+
+  @ReactMethod
+  fun resumeTracking(promise: Promise) {
+    val snapshot = StepCounterStore.resumeTracking(reactContext)
+    StepCounterBridge.emitSnapshot(snapshot)
+    promise.resolve(StepCounterStore.toWritableMap(snapshot))
+  }
+
+  @ReactMethod
   fun getCurrentStepCount(promise: Promise) {
     val snapshot = StepCounterStore.ensureCurrentSession(reactContext)
     promise.resolve(snapshot.stepCount)

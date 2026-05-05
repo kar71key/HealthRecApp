@@ -5,6 +5,7 @@ import { AppCard } from '../components/AppCard';
 import { ProgressBar } from '../components/ProgressBar';
 import { ScreenShell } from '../components/ScreenShell';
 import { useHealthData } from '../context/HealthDataContext';
+import { estimateCaloriesBurnedFromSteps } from '../services/calorieEstimate';
 import { colors } from '../theme/colors';
 
 function StatTile({
@@ -28,9 +29,11 @@ function StatTile({
 export function DashboardScreen(): React.JSX.Element {
   const {
     stepsToday,
+    caloriesBurnedToday,
     stepGoal,
     stepProgress,
     logs,
+    profile,
     stepStatus,
     stepStatusMessage,
     weeklySteps,
@@ -70,6 +73,21 @@ export function DashboardScreen(): React.JSX.Element {
     return `${latestLog.sleepQuality}/5`;
   }, [latestLog]);
 
+  const calorieText = useMemo(() => {
+    if (!profile?.weightKg) {
+      return 'Set weight';
+    }
+    const fallbackCalories =
+      caloriesBurnedToday > 0
+        ? caloriesBurnedToday
+        : estimateCaloriesBurnedFromSteps(
+            dashboardSteps,
+            profile.weightKg,
+            profile.heightCm ?? null,
+          );
+    return `${Math.round(fallbackCalories).toLocaleString()} kcal`;
+  }, [caloriesBurnedToday, dashboardSteps, profile?.heightCm, profile?.weightKg]);
+
   const statusSummary = useMemo(() => {
     if (!latestLog) {
       return 'No local wellness log saved yet.';
@@ -79,15 +97,16 @@ export function DashboardScreen(): React.JSX.Element {
     parts.push(`Mood ${latestLog.mood.toLowerCase()}`);
     parts.push(`${latestLog.sleepHours.toFixed(1)}h sleep`);
     parts.push(`${latestLog.waterIntake.toFixed(1)}L water`);
+    parts.push(calorieText.toLowerCase());
     if (latestLog.symptoms.trim().length > 0) {
       parts.push('symptoms logged');
     }
-    return `Latest local check-in: ${parts.join(' · ')}.`;
-  }, [latestLog]);
+    return `Latest local check-in: ${parts.join(' | ')}.`;
+  }, [calorieText, latestLog]);
 
   const recommendation = useMemo(() => {
     if (!latestLog) {
-      return 'Start with a quick daily check-in so the app can tailor hydration, sleep, and symptom guidance.';
+      return 'Start with a quick daily check-in so the app can tailor hydration, sleep, symptom, and calorie-burn guidance.';
     }
 
     const suggestions: string[] = [];
@@ -111,6 +130,10 @@ export function DashboardScreen(): React.JSX.Element {
       suggestions.push('Keep symptom notes precise so trends become easier to spot.');
     }
 
+    if (!profile?.weightKg) {
+      suggestions.push('Add your weight in Profile so step-based calorie burn can be estimated.');
+    }
+
     if (dashboardSteps < stepGoal) {
       suggestions.push(
         `A ${Math.max(stepGoal - dashboardSteps, 0).toLocaleString()}-step gap remains for today.`,
@@ -122,7 +145,7 @@ export function DashboardScreen(): React.JSX.Element {
     }
 
     return suggestions.join(' ');
-  }, [dashboardSteps, latestLog, stepGoal]);
+  }, [dashboardSteps, latestLog, profile?.weightKg, stepGoal]);
 
   const lastLogTime = useMemo(() => {
     if (!latestLog) {
@@ -154,14 +177,14 @@ export function DashboardScreen(): React.JSX.Element {
             accent={colors.accent}
           />
           <StatTile
+            label="Calories"
+            value={calorieText}
+            accent={colors.danger}
+          />
+          <StatTile
             label="Sleep"
             value={sleepText}
             accent={colors.warning}
-          />
-          <StatTile
-            label="Mood"
-            value={latestLog?.mood ?? 'No log'}
-            accent={colors.danger}
           />
         </View>
         <Text style={styles.snapshotMeta}>Last local update: {lastLogTime}</Text>
@@ -183,9 +206,7 @@ export function DashboardScreen(): React.JSX.Element {
       </AppCard>
 
       <AppCard title="Today's Recommendation">
-        <Text style={styles.recommendation}>
-          {recommendation}
-        </Text>
+        <Text style={styles.recommendation}>{recommendation}</Text>
       </AppCard>
     </ScreenShell>
   );

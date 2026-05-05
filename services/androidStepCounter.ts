@@ -13,6 +13,7 @@ export type AndroidStepCounterSnapshot = {
   serviceRunning: boolean;
   sensorAvailable: boolean;
   permissionGranted: boolean;
+  trackingPaused: boolean;
 };
 
 type AndroidStepCounterModule = {
@@ -20,6 +21,8 @@ type AndroidStepCounterModule = {
   removeListeners: (count: number) => void;
   startService: () => Promise<AndroidStepCounterSnapshot>;
   stopService: () => Promise<void>;
+  pauseTracking: () => Promise<AndroidStepCounterSnapshot>;
+  resumeTracking: () => Promise<AndroidStepCounterSnapshot>;
   getCurrentStepCount: () => Promise<number>;
   getSnapshot: () => Promise<AndroidStepCounterSnapshot>;
 };
@@ -52,6 +55,22 @@ export async function stopAndroidStepCounterService(): Promise<void> {
   }
 
   await nativeModule.stopService();
+}
+
+export async function pauseAndroidStepCounterTracking(): Promise<AndroidStepCounterSnapshot> {
+  if (!nativeModule) {
+    throw new Error('Android step counter module is unavailable.');
+  }
+
+  return nativeModule.pauseTracking();
+}
+
+export async function resumeAndroidStepCounterTracking(): Promise<AndroidStepCounterSnapshot> {
+  if (!nativeModule) {
+    throw new Error('Android step counter module is unavailable.');
+  }
+
+  return nativeModule.resumeTracking();
 }
 
 export async function getAndroidStepCounterSnapshot(): Promise<AndroidStepCounterSnapshot> {

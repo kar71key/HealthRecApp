@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppCard } from '../components/AppCard';
@@ -6,8 +6,19 @@ import { MoodSelector } from '../components/MoodSelector';
 import { ScreenShell } from '../components/ScreenShell';
 import { SleepQualitySelector } from '../components/SleepQualitySelector';
 import { useHealthData } from '../context/HealthDataContext';
+import {
+  estimateCaloriesBurnedFromActivity,
+  formatDurationClock,
+  PHYSICAL_ACTIVITY_OPTIONS,
+} from '../services/activityCalories';
 import { colors } from '../theme/colors';
-import type { FoodEntry, MealType } from '../types/data';
+import type {
+  FoodEntry,
+  MealType,
+  PhysicalActivityCategory,
+  PhysicalActivityOptionKey,
+  PhysicalActivitySession,
+} from '../types/data';
 import type { LogFormState, SavedLog, SleepQuality } from '../types/health';
 
 const MEAL_TYPES: MealType[] = [
@@ -25,6 +36,15 @@ type FoodEntryDraft = {
   quantityUnit: string;
   timeText: string;
   caffeineMg: string;
+};
+
+type ActivityOptionCardProps = {
+  optionKey: PhysicalActivityOptionKey;
+  title: string;
+  intensityLabel: string;
+  description: string;
+  selected: boolean;
+  onPress: () => void;
 };
 
 function FieldLabel({ label }: { label: string }): React.JSX.Element {
@@ -169,6 +189,46 @@ function MealTypeChip({
   );
 }
 
+function ActivityOptionCard({
+  optionKey,
+  title,
+  intensityLabel,
+  description,
+  selected,
+  onPress,
+}: ActivityOptionCardProps): React.JSX.Element {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.activityOptionCard, selected && styles.activityOptionCardSelected]}
+    >
+      <View style={styles.activityOptionHeader}>
+        <Text
+          style={[
+            styles.activityOptionTitle,
+            selected && styles.activityOptionTitleSelected,
+          ]}
+        >
+          {title}
+        </Text>
+        <EntryBadge
+          label={intensityLabel}
+          accent={selected ? '#DCEEFF' : '#EEF3FB'}
+        />
+      </View>
+      <Text
+        style={[
+          styles.activityOptionMeta,
+          selected && styles.activityOptionMetaSelected,
+        ]}
+      >
+        {optionKey.replace(/^[^-]+-/, '').replace('-', ' ')}
+      </Text>
+      <Text style={styles.activityOptionDescription}>{description}</Text>
+    </Pressable>
+  );
+}
+
 function FoodEntryRow({ entry }: { entry: FoodEntry }): React.JSX.Element {
   return (
     <View style={styles.foodEntryCard}>
@@ -189,19 +249,81 @@ function FoodEntryRow({ entry }: { entry: FoodEntry }): React.JSX.Element {
   );
 }
 
+function ActivitySessionRow({
+  session,
+}: {
+  session: PhysicalActivitySession;
+}): React.JSX.Element {
+  return (
+    <View style={styles.foodEntryCard}>
+      <View style={styles.foodEntryHeader}>
+        <Text style={styles.foodEntryTitle}>{session.title}</Text>
+        <Text style={styles.foodEntryTime}>
+          {new Date(session.startedAt).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </Text>
+      </View>
+      <Text style={styles.foodEntryMeta}>
+        {session.category} | {session.intensityLabel} | {formatDurationClock(session.durationSeconds)} |{' '}
+        {Math.round(session.caloriesBurned)} kcal
+      </Text>
+    </View>
+  );
+}
+
 export function LogScreen(): React.JSX.Element {
   const {
     logForm,
     setLogField,
     saveLog,
     saveFoodEntry,
+    startTimedActivity,
+    stopTimedActivity,
     logs,
     foodEntries,
+    activitySessions,
+    activeActivityTimer,
+    profile,
     pendingSyncCount,
     isStorageReady,
   } = useHealthData();
   const [savedMessage, setSavedMessage] = useState('');
   const [foodDraft, setFoodDraft] = useState<FoodEntryDraft>(getDefaultFoodDraft());
+  const [selectedActivityKey, setSelectedActivityKey] =
+    useState<PhysicalActivityOptionKey>('running-jogging');
+  const [activityElapsedSeconds, setActivityElapsedSeconds] = useState(0);
+
+  const selectedActivityOption = useMemo(
+    () =>
+      PHYSICAL_ACTIVITY_OPTIONS.find(option => option.key === selectedActivityKey) ??
+      PHYSICAL_ACTIVITY_OPTIONS[0],
+    [selectedActivityKey],
+  );
+  const displayedActivityOption = useMemo(
+    () =>
+      PHYSICAL_ACTIVITY_OPTIONS.find(
+        option => option.key === (activeActivityTimer?.optionKey ?? selectedActivityKey),
+      ) ?? selectedActivityOption,
+    [activeActivityTimer?.optionKey, selectedActivityKey, selectedActivityOption],
+  );
+
+  const groupedActivityOptions = useMemo(() => {
+    return PHYSICAL_ACTIVITY_OPTIONS.reduce<
+      Record<PhysicalActivityCategory, typeof PHYSICAL_ACTIVITY_OPTIONS>
+    >(
+      (groups, option) => {
+        groups[option.category].push(option);
+        return groups;
+      },
+      {
+        Running: [],
+        Cycling: [],
+        Swimming: [],
+      },
+    );
+  }, []);
 
   const lastSaved = useMemo(() => {
     if (!logs[0]) {
@@ -211,6 +333,28 @@ export function LogScreen(): React.JSX.Element {
       logs[0].timestamp,
     )}`;
   }, [logs]);
+
+  useEffect(() => {
+    if (!activeActivityTimer) {
+      setActivityElapsedSeconds(0);
+      return;
+    }
+
+    const tick = () => {
+      setActivityElapsedSeconds(
+        Math.max(
+          0,
+          Math.round(
+            (Date.now() - new Date(activeActivityTimer.startedAt).getTime()) / 1000,
+          ),
+        ),
+      );
+    };
+
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [activeActivityTimer]);
 
   const handleInput = <K extends keyof LogFormState>(
     field: K,
@@ -288,6 +432,42 @@ export function LogScreen(): React.JSX.Element {
     };
 
     persist();
+  };
+
+  const handleStartTimedActivity = () => {
+    const begin = async () => {
+      try {
+        await startTimedActivity(selectedActivityKey);
+        setSavedMessage(
+          `${selectedActivityOption.title} timer started. Step tracking is paused until you stop this session.`,
+        );
+      } catch (error) {
+        setSavedMessage(
+          error instanceof Error ? error.message : 'Unable to start the activity timer.',
+        );
+      }
+    };
+
+    begin();
+  };
+
+  const handleStopTimedActivity = () => {
+    const finish = async () => {
+      try {
+        const session = await stopTimedActivity();
+        setSavedMessage(
+          `${session.title} saved for ${formatDurationClock(session.durationSeconds)} and ${Math.round(
+            session.caloriesBurned,
+          )} kcal. Step tracking has resumed.`,
+        );
+      } catch (error) {
+        setSavedMessage(
+          error instanceof Error ? error.message : 'Unable to save the timed activity.',
+        );
+      }
+    };
+
+    finish();
   };
 
   return (
@@ -479,6 +659,93 @@ export function LogScreen(): React.JSX.Element {
         <View style={styles.timelineList}>
           {foodEntries.slice(0, 6).map(entry => (
             <FoodEntryRow key={entry.id} entry={entry} />
+          ))}
+        </View>
+      </AppCard>
+
+      <AppCard title="Timed Activity">
+        <Text style={styles.timelineText}>
+          Record a workout with a live timer. Step tracking pauses while the timer runs so workout movement does not get counted twice.
+        </Text>
+        <Text style={styles.activitySupportText}>
+          {profile?.weightKg
+            ? `Calorie estimates use your saved weight of ${formatMetricValue(profile.weightKg)} kg.`
+            : 'Add your weight in Profile before starting a timed activity.'}
+        </Text>
+
+        {(['Running', 'Cycling', 'Swimming'] as PhysicalActivityCategory[]).map(category => (
+          <View key={category} style={styles.activitySection}>
+            <FieldLabel label={category} />
+            <View style={styles.activityOptionList}>
+              {groupedActivityOptions[category].map(option => (
+                <ActivityOptionCard
+                  key={option.key}
+                  optionKey={option.key}
+                  title={option.title}
+                  intensityLabel={option.intensityLabel}
+                  description={option.description}
+                  selected={
+                    (activeActivityTimer?.optionKey ?? selectedActivityKey) === option.key
+                  }
+                  onPress={() => setSelectedActivityKey(option.key)}
+                />
+              ))}
+            </View>
+          </View>
+        ))}
+
+        <View style={styles.activityTimerCard}>
+          <Text style={styles.activityTimerLabel}>
+            {activeActivityTimer ? 'Current session' : 'Selected workout'}
+          </Text>
+          <Text style={styles.activityTimerTitle}>
+            {displayedActivityOption.title}
+          </Text>
+          <Text style={styles.activityTimerMeta}>
+            {displayedActivityOption.intensityLabel}{' '}
+            |{' '}
+            {profile?.weightKg
+              ? `${Math.round(
+                  estimateCaloriesBurnedFromActivity(
+                    displayedActivityOption.metValue,
+                    activeActivityTimer ? activityElapsedSeconds : 1800,
+                    profile.weightKg,
+                  ),
+                )} kcal ${activeActivityTimer ? 'so far' : 'per 30 min estimate'}`
+              : 'Weight required for calorie estimate'}
+          </Text>
+          <Text style={styles.activityTimerClock}>
+            {formatDurationClock(activityElapsedSeconds)}
+          </Text>
+          <View style={styles.activityActionRow}>
+            <Pressable
+              onPress={handleStartTimedActivity}
+              disabled={Boolean(activeActivityTimer) || !profile?.weightKg}
+              style={[
+                styles.saveButton,
+                styles.activityActionButton,
+                (activeActivityTimer || !profile?.weightKg) && styles.saveButtonDisabled,
+              ]}
+            >
+              <Text style={styles.saveText}>Start Activity</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleStopTimedActivity}
+              disabled={!activeActivityTimer}
+              style={[
+                styles.saveButton,
+                styles.activityActionButton,
+                !activeActivityTimer && styles.saveButtonDisabled,
+              ]}
+            >
+              <Text style={styles.saveText}>Stop and Save</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={styles.timelineList}>
+          {activitySessions.slice(0, 4).map(session => (
+            <ActivitySessionRow key={session.id} session={session} />
           ))}
         </View>
       </AppCard>
@@ -728,5 +995,103 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontSize: 12,
     color: colors.textSecondary,
+  },
+  activitySupportText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginBottom: 6,
+  },
+  activitySection: {
+    marginTop: 6,
+  },
+  activityOptionList: {
+    gap: 10,
+  },
+  activityOptionCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    padding: 12,
+  },
+  activityOptionCardSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryMuted,
+  },
+  activityOptionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    alignItems: 'center',
+  },
+  activityOptionTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  activityOptionTitleSelected: {
+    color: colors.primary,
+  },
+  activityOptionMeta: {
+    marginTop: 6,
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'capitalize',
+  },
+  activityOptionMetaSelected: {
+    color: colors.primary,
+  },
+  activityOptionDescription: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.textSecondary,
+  },
+  activityTimerCard: {
+    marginTop: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    padding: 14,
+  },
+  activityTimerLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  activityTimerTitle: {
+    marginTop: 6,
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  activityTimerMeta: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.textSecondary,
+  },
+  activityTimerClock: {
+    marginTop: 10,
+    fontSize: 34,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  activityActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+    marginBottom: 14,
+  },
+  activityActionButton: {
+    flex: 1,
+    marginTop: 0,
+  },
+  saveButtonDisabled: {
+    opacity: 0.45,
   },
 });

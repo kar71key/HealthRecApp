@@ -5,7 +5,7 @@ import type { SQLiteDatabase, SQLiteValue } from 'react-native-sqlite-storage';
 SQLite.enablePromise(true);
 
 const DATABASE_NAME = 'healthrec_relational.db';
-const SCHEMA_VERSION = '2';
+const SCHEMA_VERSION = '4';
 
 let databasePromise: Promise<SQLiteDatabase> | null = null;
 
@@ -73,12 +73,33 @@ const SCHEMA_STATEMENTS = [
       user_id TEXT NOT NULL,
       local_date TEXT NOT NULL,
       step_count INTEGER NOT NULL,
+      step_calories_burned REAL NOT NULL DEFAULT 0,
+      activity_calories_burned REAL NOT NULL DEFAULT 0,
+      calories_burned REAL NOT NULL DEFAULT 0,
       source TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       sync_status TEXT NOT NULL
     );`,
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_step_summary_user_local_date ON step_daily_summaries(user_id, local_date);',
+  `CREATE TABLE IF NOT EXISTS physical_activity_sessions (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL,
+      local_date TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      ended_at TEXT NOT NULL,
+      category TEXT NOT NULL,
+      option_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      intensity_label TEXT NOT NULL,
+      met_value REAL NOT NULL,
+      duration_seconds INTEGER NOT NULL,
+      calories_burned REAL NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      sync_status TEXT NOT NULL
+    );`,
+  'CREATE INDEX IF NOT EXISTS idx_activity_sessions_user_local_date ON physical_activity_sessions(user_id, local_date, started_at);',
   `CREATE TABLE IF NOT EXISTS symptom_entries (
       id TEXT PRIMARY KEY NOT NULL,
       user_id TEXT NOT NULL,
@@ -164,6 +185,33 @@ async function ensureSchema(db: SQLiteDatabase): Promise<void> {
       "ALTER TABLE sync_queue ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
     );
   }
+
+  if (!(await hasColumn(db, 'step_daily_summaries', 'calories_burned'))) {
+    await db.executeSql(
+      'ALTER TABLE step_daily_summaries ADD COLUMN calories_burned REAL NOT NULL DEFAULT 0',
+    );
+  }
+
+  if (!(await hasColumn(db, 'step_daily_summaries', 'step_calories_burned'))) {
+    await db.executeSql(
+      'ALTER TABLE step_daily_summaries ADD COLUMN step_calories_burned REAL NOT NULL DEFAULT 0',
+    );
+    await db.executeSql(
+      'UPDATE step_daily_summaries SET step_calories_burned = calories_burned WHERE step_calories_burned = 0',
+    );
+  }
+
+  if (!(await hasColumn(db, 'step_daily_summaries', 'activity_calories_burned'))) {
+    await db.executeSql(
+      'ALTER TABLE step_daily_summaries ADD COLUMN activity_calories_burned REAL NOT NULL DEFAULT 0',
+    );
+  }
+
+  await db.executeSql(
+    `UPDATE step_daily_summaries
+     SET calories_burned = COALESCE(step_calories_burned, 0) + COALESCE(activity_calories_burned, 0)
+     WHERE COALESCE(calories_burned, 0) != COALESCE(step_calories_burned, 0) + COALESCE(activity_calories_burned, 0)`,
+  );
 
   await db.executeSql(
     'INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)',

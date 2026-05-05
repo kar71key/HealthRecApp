@@ -8,6 +8,7 @@ import type {
 } from '../types/data';
 import type { MoodLevel, SleepQuality } from '../types/health';
 import { getCurrentTimestamp, getLocalDateDaysAgo, toIsoAtLocalTime } from './date';
+import { estimateCaloriesBurnedFromSteps } from './calorieEstimate';
 
 export const LEGACY_DEVICE_USER_ID = 'local-primary';
 
@@ -229,6 +230,13 @@ export function buildSeedStepSummaries(
       userId,
       localDate,
       stepCount: Math.max(4200, base),
+      stepCaloriesBurned: estimateCaloriesBurnedFromSteps(
+        Math.max(4200, base),
+        70,
+        175,
+      ),
+      activityCaloriesBurned: 0,
+      caloriesBurned: estimateCaloriesBurnedFromSteps(Math.max(4200, base), 70, 175),
       source: 'mock',
       createdAt: timestamp,
       updatedAt: timestamp,

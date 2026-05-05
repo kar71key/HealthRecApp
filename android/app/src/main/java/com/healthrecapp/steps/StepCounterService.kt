@@ -128,7 +128,9 @@ class StepCounterService : Service(), SensorEventListener {
     )
 
     val contentText =
-      if (snapshot.sensorAvailable) {
+      if (snapshot.trackingPaused) {
+        "Step tracking paused during a timed activity"
+      } else if (snapshot.sensorAvailable) {
         "${snapshot.stepCount} steps recorded today"
       } else {
         "Step counter sensor unavailable on this device"

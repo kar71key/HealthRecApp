@@ -27,6 +27,9 @@ export type StepPoint = {
   isoDate: string;
   day: string;
   steps: number;
+  stepCaloriesBurned: number;
+  activityCaloriesBurned: number;
+  caloriesBurned: number;
 };
 
 export type SaveLogResult = 'created' | 'updated';

@@ -8,6 +8,7 @@ import {
   mergeRemoteFoodEntries,
   mergeRemoteInsightFacts,
   mergeRemoteNutritionScans,
+  mergeRemotePhysicalActivitySessions,
   mergeRemoteProfile,
   mergeRemoteStepSummaries,
   refreshInsightSnapshots,
@@ -20,6 +21,7 @@ import type {
   HealthSyncResult,
   InsightFact,
   NutritionScan,
+  PhysicalActivitySession,
   StepDailySummary,
   SyncQueueItem,
   SyncState,
@@ -31,6 +33,7 @@ const ENTITY_TABLE_MAP = {
   daily_logs: 'daily_logs',
   food_entries: 'food_entries',
   step_daily_summaries: 'step_daily_summaries',
+  physical_activity_sessions: 'physical_activity_sessions',
   nutrition_scans: 'nutrition_scans',
   insight_snapshots: 'insight_snapshots',
 } as const;
@@ -78,10 +81,31 @@ type RemoteStepSummaryRow = {
   user_id: string;
   local_date: string;
   step_count: number;
+  step_calories_burned?: number | null;
+  activity_calories_burned?: number | null;
+  calories_burned?: number | null;
   source: StepDailySummary['source'];
   created_at: string;
   updated_at: string;
   sync_status: StepDailySummary['syncStatus'];
+};
+
+type RemotePhysicalActivitySessionRow = {
+  id: string;
+  user_id: string;
+  local_date: string;
+  started_at: string;
+  ended_at: string;
+  category: PhysicalActivitySession['category'];
+  option_key: PhysicalActivitySession['optionKey'];
+  title: string;
+  intensity_label: string;
+  met_value: number;
+  duration_seconds: number;
+  calories_burned: number;
+  created_at: string;
+  updated_at: string;
+  sync_status: PhysicalActivitySession['syncStatus'];
 };
 
 type RemoteNutritionScanRow = {
@@ -131,6 +155,13 @@ type RemoteProfileRow = {
   created_at: string;
   updated_at: string;
   sync_status: UserProfile['syncStatus'];
+};
+
+type SupabaseErrorLike = {
+  code?: string;
+  message?: string;
+  details?: string | null;
+  hint?: string | null;
 };
 
 function toProfile(row: RemoteProfileRow): UserProfile {
@@ -194,12 +225,49 @@ function toFoodEntry(row: RemoteFoodEntryRow): FoodEntry {
 }
 
 function toStepSummary(row: RemoteStepSummaryRow): StepDailySummary {
+  const stepCaloriesBurned =
+    typeof row.step_calories_burned === 'number'
+      ? row.step_calories_burned
+      : typeof row.calories_burned === 'number'
+        ? row.calories_burned
+        : Number.NaN;
+  const activityCaloriesBurned =
+    typeof row.activity_calories_burned === 'number'
+      ? row.activity_calories_burned
+      : 0;
+
   return {
     id: row.id,
     userId: row.user_id,
     localDate: row.local_date,
     stepCount: row.step_count,
+    stepCaloriesBurned,
+    activityCaloriesBurned,
+    caloriesBurned:
+      typeof row.calories_burned === 'number' ? row.calories_burned : Number.NaN,
     source: row.source,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    syncStatus: 'synced',
+  };
+}
+
+function toPhysicalActivitySession(
+  row: RemotePhysicalActivitySessionRow,
+): PhysicalActivitySession {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    localDate: row.local_date,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    category: row.category,
+    optionKey: row.option_key,
+    title: row.title,
+    intensityLabel: row.intensity_label,
+    metValue: row.met_value,
+    durationSeconds: row.duration_seconds,
+    caloriesBurned: row.calories_burned,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     syncStatus: 'synced',
@@ -243,6 +311,10 @@ function toInsightFact(row: RemoteInsightFactRow): InsightFact {
   };
 }
 
+function isScopedInsightSnapshotId(userId: string, insightId: string): boolean {
+  return insightId.startsWith(`insight-${userId}-`);
+}
+
 function buildSkippedResult(mode: HealthSyncMode): HealthSyncResult {
   return {
     mode,
@@ -266,7 +338,59 @@ function getErrorMessage(error: unknown): string {
     return error;
   }
 
+  if (error && typeof error === 'object') {
+    const candidate = error as SupabaseErrorLike;
+    const parts = [
+      candidate.message,
+      candidate.details,
+      candidate.hint ? `Hint: ${candidate.hint}` : null,
+      candidate.code ? `Code: ${candidate.code}` : null,
+    ].filter((part): part is string => Boolean(part && part.trim().length > 0));
+
+    if (parts.length > 0) {
+      return parts.join(' ');
+    }
+  }
+
   return 'Unknown sync error';
+}
+
+function isMissingRemoteColumnError(
+  error: unknown,
+  tableName: string,
+  columnName: string,
+): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const candidate = error as SupabaseErrorLike;
+  const message = candidate.message?.toLowerCase() ?? '';
+  const details = candidate.details?.toLowerCase() ?? '';
+  const code = candidate.code?.toUpperCase() ?? '';
+
+  return (
+    code === 'PGRST204' &&
+    (message.includes(columnName.toLowerCase()) || details.includes(columnName.toLowerCase())) &&
+    (message.includes(tableName.toLowerCase()) || details.includes(tableName.toLowerCase()))
+  );
+}
+
+function isMissingRemoteTableError(error: unknown, tableName: string): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const candidate = error as SupabaseErrorLike;
+  const message = candidate.message?.toLowerCase() ?? '';
+  const details = candidate.details?.toLowerCase() ?? '';
+  const code = candidate.code?.toUpperCase() ?? '';
+  const normalizedTableName = tableName.toLowerCase();
+
+  return (
+    code === 'PGRST205' &&
+    (message.includes(normalizedTableName) || details.includes(normalizedTableName))
+  );
 }
 
 function classifySyncState(message: string): SyncState {
@@ -293,6 +417,21 @@ function buildUpsertPayload(item: SyncQueueItem): Record<string, unknown> {
   };
 }
 
+function buildCompatibilityPayload(
+  item: SyncQueueItem,
+  payload: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (item.entityType !== 'step_daily_summaries') {
+    return null;
+  }
+
+  const fallbackPayload = { ...payload };
+  delete fallbackPayload.step_calories_burned;
+  delete fallbackPayload.activity_calories_burned;
+  delete fallbackPayload.calories_burned;
+  return fallbackPayload;
+}
+
 export async function pushPendingMutations(
   _userId: string,
 ): Promise<HealthSyncResult> {
@@ -314,7 +453,7 @@ export async function pushPendingMutations(
     const table = ENTITY_TABLE_MAP[item.entityType];
 
     try {
-      let error: Error | null = null;
+      let error: unknown = null;
 
       if (item.operation === 'delete') {
         const result = await client
@@ -324,13 +463,46 @@ export async function pushPendingMutations(
           .eq('user_id', item.userId);
         error = result.error;
       } else {
+        const upsertPayload = buildUpsertPayload(item);
         const result = await client
           .from(table)
-          .upsert(buildUpsertPayload(item) as never);
+          .upsert(upsertPayload as never);
         error = result.error;
+
+        if (
+          error &&
+          isMissingRemoteColumnError(error, 'step_daily_summaries', 'calories_burned')
+        ) {
+          const fallbackPayload = buildCompatibilityPayload(item, upsertPayload);
+          if (fallbackPayload) {
+            const retryResult = await client
+              .from(table)
+              .upsert(fallbackPayload as never);
+
+            if (!retryResult.error) {
+              console.warn(
+                'Supabase schema is missing step_daily_summaries.calories_burned. Retried sync without that field so the rest of the record could sync.',
+              );
+              error = null;
+            } else {
+              error = retryResult.error;
+            }
+          }
+        }
       }
 
       if (error) {
+        if (
+          item.entityType === 'physical_activity_sessions' &&
+          isMissingRemoteTableError(error, 'physical_activity_sessions')
+        ) {
+          await executeSql(
+            'UPDATE sync_queue SET status = ?, last_error = ?, updated_at = ? WHERE id = ?',
+            ['pending', null, new Date().toISOString(), item.id],
+          );
+          continue;
+        }
+
         throw error;
       }
 
@@ -390,6 +562,7 @@ export async function pullRemoteSnapshot(
       dailyLogResult,
       foodEntryResult,
       stepSummaryResult,
+      activitySessionResult,
       nutritionScanResult,
       insightResult,
     ] = await Promise.all([
@@ -405,6 +578,11 @@ export async function pullRemoteSnapshot(
         .select('*')
         .eq('user_id', userId)
         .order('local_date', { ascending: true }),
+      client
+        .from('physical_activity_sessions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('started_at', { ascending: false }),
       client
         .from('nutrition_scans')
         .select('*')
@@ -430,6 +608,14 @@ export async function pullRemoteSnapshot(
       }
     }
 
+    const activitySessionTableMissing = isMissingRemoteTableError(
+      activitySessionResult.error,
+      'physical_activity_sessions',
+    );
+    if (activitySessionResult.error && !activitySessionTableMissing) {
+      throw activitySessionResult.error;
+    }
+
     let pulled = 0;
 
     if (profileResult.data) {
@@ -446,13 +632,20 @@ export async function pullRemoteSnapshot(
     pulled += await mergeRemoteStepSummaries(
       ((stepSummaryResult.data ?? []) as RemoteStepSummaryRow[]).map(toStepSummary),
     );
+    pulled += await mergeRemotePhysicalActivitySessions(
+      ((activitySessionTableMissing ? [] : activitySessionResult.data ?? []) as RemotePhysicalActivitySessionRow[]).map(
+        toPhysicalActivitySession,
+      ),
+    );
     pulled += await mergeRemoteNutritionScans(
       ((nutritionScanResult.data ?? []) as RemoteNutritionScanRow[]).map(
         toNutritionScan,
       ),
     );
     pulled += await mergeRemoteInsightFacts(
-      ((insightResult.data ?? []) as RemoteInsightFactRow[]).map(toInsightFact),
+      ((insightResult.data ?? []) as RemoteInsightFactRow[])
+        .filter(row => isScopedInsightSnapshotId(userId, row.id))
+        .map(toInsightFact),
     );
 
     await refreshInsightSnapshots(pulled > 0);

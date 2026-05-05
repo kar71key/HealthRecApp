@@ -16,6 +16,8 @@ import {
   getWeekdayShort,
   toLocalDateString,
 } from '../services/date';
+import { getPhysicalActivityOption } from '../services/activityCalories';
+import { estimateCaloriesBurnedFromSteps } from '../services/calorieEstimate';
 import type {
   DailyLog,
   DailyLogInput,
@@ -24,6 +26,8 @@ import type {
   InsightFact,
   NutritionScan,
   NutritionScanInput,
+  PhysicalActivitySession,
+  PhysicalActivitySessionInput,
   SyncStatus,
   StepDailySummary,
   SyncQueueItem,
@@ -89,10 +93,31 @@ type StepSummaryRow = {
   user_id: string;
   local_date: string;
   step_count: number;
+  step_calories_burned: number;
+  activity_calories_burned: number;
+  calories_burned: number;
   source: StepDailySummary['source'];
   created_at: string;
   updated_at: string;
   sync_status: StepDailySummary['syncStatus'];
+};
+
+type PhysicalActivitySessionRow = {
+  id: string;
+  user_id: string;
+  local_date: string;
+  started_at: string;
+  ended_at: string;
+  category: PhysicalActivitySession['category'];
+  option_key: PhysicalActivitySession['optionKey'];
+  title: string;
+  intensity_label: string;
+  met_value: number;
+  duration_seconds: number;
+  calories_burned: number;
+  created_at: string;
+  updated_at: string;
+  sync_status: PhysicalActivitySession['syncStatus'];
 };
 
 type NutritionScanRow = {
@@ -162,6 +187,24 @@ function getScopedId(prefix: string, suffix: string): string {
 
 function getLastSuccessfulSyncKey(userId: string): string {
   return `${LAST_SUCCESSFUL_SYNC_AT_KEY}:${userId}`;
+}
+
+function calculateSummaryCalories(
+  stepCount: number,
+  profile?: Pick<UserProfile, 'weightKg' | 'heightCm'> | null,
+): number {
+  return estimateCaloriesBurnedFromSteps(
+    stepCount,
+    profile?.weightKg ?? null,
+    profile?.heightCm ?? null,
+  );
+}
+
+function combineSummaryCalories(
+  stepCaloriesBurned: number,
+  activityCaloriesBurned: number,
+): number {
+  return Math.round((stepCaloriesBurned + activityCaloriesBurned) * 10) / 10;
 }
 
 function compareIsoTimestamps(left: string, right: string): number {
@@ -234,10 +277,35 @@ function toStepSummaryRecord(entry: StepDailySummary): Record<string, unknown> {
     user_id: entry.userId,
     local_date: entry.localDate,
     step_count: entry.stepCount,
+    step_calories_burned: entry.stepCaloriesBurned,
+    activity_calories_burned: entry.activityCaloriesBurned,
+    calories_burned: entry.caloriesBurned,
     source: entry.source,
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
     sync_status: entry.syncStatus,
+  };
+}
+
+function toPhysicalActivitySessionRecord(
+  session: PhysicalActivitySession,
+): Record<string, unknown> {
+  return {
+    id: session.id,
+    user_id: session.userId,
+    local_date: session.localDate,
+    started_at: session.startedAt,
+    ended_at: session.endedAt,
+    category: session.category,
+    option_key: session.optionKey,
+    title: session.title,
+    intensity_label: session.intensityLabel,
+    met_value: session.metValue,
+    duration_seconds: session.durationSeconds,
+    calories_burned: session.caloriesBurned,
+    created_at: session.createdAt,
+    updated_at: session.updatedAt,
+    sync_status: session.syncStatus,
   };
 }
 
@@ -326,7 +394,32 @@ function mapStepSummaryRow(row: StepSummaryRow): StepDailySummary {
     userId: row.user_id,
     localDate: row.local_date,
     stepCount: row.step_count,
+    stepCaloriesBurned: row.step_calories_burned ?? row.calories_burned ?? 0,
+    activityCaloriesBurned: row.activity_calories_burned ?? 0,
+    caloriesBurned: row.calories_burned,
     source: row.source,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    syncStatus: row.sync_status,
+  };
+}
+
+function mapPhysicalActivitySessionRow(
+  row: PhysicalActivitySessionRow,
+): PhysicalActivitySession {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    localDate: row.local_date,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    category: row.category,
+    optionKey: row.option_key,
+    title: row.title,
+    intensityLabel: row.intensity_label,
+    metValue: row.met_value,
+    durationSeconds: row.duration_seconds,
+    caloriesBurned: row.calories_burned,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     syncStatus: row.sync_status,
@@ -543,20 +636,67 @@ async function insertStepSummaryIfMissing(entry: StepDailySummary): Promise<void
       user_id,
       local_date,
       step_count,
+      step_calories_burned,
+      activity_calories_burned,
+      calories_burned,
       source,
       created_at,
       updated_at,
       sync_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.id,
       entry.userId,
       entry.localDate,
       entry.stepCount,
+      entry.stepCaloriesBurned,
+      entry.activityCaloriesBurned,
+      entry.caloriesBurned,
       entry.source,
       entry.createdAt,
       entry.updatedAt,
       entry.syncStatus,
+    ],
+  );
+}
+
+async function insertPhysicalActivitySession(
+  session: PhysicalActivitySession,
+): Promise<void> {
+  await executeSql(
+    `INSERT OR IGNORE INTO physical_activity_sessions(
+      id,
+      user_id,
+      local_date,
+      started_at,
+      ended_at,
+      category,
+      option_key,
+      title,
+      intensity_label,
+      met_value,
+      duration_seconds,
+      calories_burned,
+      created_at,
+      updated_at,
+      sync_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      session.id,
+      session.userId,
+      session.localDate,
+      session.startedAt,
+      session.endedAt,
+      session.category,
+      session.optionKey,
+      session.title,
+      session.intensityLabel,
+      session.metValue,
+      session.durationSeconds,
+      session.caloriesBurned,
+      session.createdAt,
+      session.updatedAt,
+      session.syncStatus,
     ],
   );
 }
@@ -722,20 +862,67 @@ async function upsertStepSummaryRecord(entry: StepDailySummary): Promise<void> {
       user_id,
       local_date,
       step_count,
+      step_calories_burned,
+      activity_calories_burned,
+      calories_burned,
       source,
       created_at,
       updated_at,
       sync_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.id,
       entry.userId,
       entry.localDate,
       entry.stepCount,
+      entry.stepCaloriesBurned,
+      entry.activityCaloriesBurned,
+      entry.caloriesBurned,
       entry.source,
       entry.createdAt,
       entry.updatedAt,
       entry.syncStatus,
+    ],
+  );
+}
+
+async function upsertPhysicalActivitySessionRecord(
+  session: PhysicalActivitySession,
+): Promise<void> {
+  await executeSql(
+    `INSERT OR REPLACE INTO physical_activity_sessions(
+      id,
+      user_id,
+      local_date,
+      started_at,
+      ended_at,
+      category,
+      option_key,
+      title,
+      intensity_label,
+      met_value,
+      duration_seconds,
+      calories_burned,
+      created_at,
+      updated_at,
+      sync_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      session.id,
+      session.userId,
+      session.localDate,
+      session.startedAt,
+      session.endedAt,
+      session.category,
+      session.optionKey,
+      session.title,
+      session.intensityLabel,
+      session.metValue,
+      session.durationSeconds,
+      session.caloriesBurned,
+      session.createdAt,
+      session.updatedAt,
+      session.syncStatus,
     ],
   );
 }
@@ -872,6 +1059,9 @@ async function migrateLegacyHealthData(userId: string): Promise<void> {
       userId,
       localDate,
       stepCount: Math.max(0, Math.round(Number(point.steps ?? 0))),
+      stepCaloriesBurned: Math.max(0, Number(point.caloriesBurned ?? 0)),
+      activityCaloriesBurned: 0,
+      caloriesBurned: Math.max(0, Number(point.caloriesBurned ?? 0)),
       source: 'mock',
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -957,6 +1147,11 @@ async function replaceInsightFacts(
   userId: string,
   facts: InsightFact[],
 ): Promise<void> {
+  await executeSql(
+    `DELETE FROM sync_queue
+     WHERE user_id = ? AND entity_type = ? AND status IN ('pending', 'error')`,
+    [userId, 'insight_snapshots'],
+  );
   await executeSql('DELETE FROM insight_snapshots WHERE user_id = ?', [userId]);
 
   for (const fact of facts) {
@@ -969,6 +1164,7 @@ const ENTITY_TABLE_NAME_MAP: Record<SyncQueueItem['entityType'], string> = {
   daily_logs: 'daily_logs',
   food_entries: 'food_entries',
   step_daily_summaries: 'step_daily_summaries',
+  physical_activity_sessions: 'physical_activity_sessions',
   nutrition_scans: 'nutrition_scans',
   insight_snapshots: 'insight_snapshots',
 };
@@ -1004,12 +1200,20 @@ export async function clearPendingSyncForEntity(
 
 export async function enqueueAllUserDataForSync(): Promise<void> {
   const userId = getRequiredUserId();
-  const [profile, dailyLogs, foodEntries, stepSummaries, nutritionScans] =
+  const [
+    profile,
+    dailyLogs,
+    foodEntries,
+    stepSummaries,
+    activitySessions,
+    nutritionScans,
+  ] =
     await Promise.all([
       getActiveProfile(),
       listDailyLogs(),
       listFoodEntries(),
       listStepSummaries(),
+      listPhysicalActivitySessions(),
       listNutritionScans(),
     ]);
 
@@ -1046,6 +1250,15 @@ export async function enqueueAllUserDataForSync(): Promise<void> {
       'step_daily_summaries',
       summary.id,
       JSON.stringify(toStepSummaryRecord(summary)),
+    );
+  }
+
+  for (const session of activitySessions) {
+    await insertSyncQueueItem(
+      userId,
+      'physical_activity_sessions',
+      session.id,
+      JSON.stringify(toPhysicalActivitySessionRecord(session)),
     );
   }
 
@@ -1144,7 +1357,7 @@ export async function updateUserProfile(
     return null;
   }
 
-  return upsertUserProfile({
+  const updatedProfile = await upsertUserProfile({
     fullName: current.fullName,
     email: current.email ?? '',
     avatarLabel: current.avatarLabel ?? 'HR',
@@ -1154,16 +1367,68 @@ export async function updateUserProfile(
     weightKg: updates.weightKg ?? current.weightKg ?? null,
     goal: updates.goal ?? current.goal ?? null,
   });
+
+  await recalculateStepSummaryCalories(updatedProfile);
+  return updatedProfile;
+}
+
+export async function recalculateStepSummaryCalories(
+  profile?: Pick<UserProfile, 'heightCm' | 'weightKg'> | null,
+): Promise<void> {
+  const userId = getRequiredUserId();
+  const activeProfile = profile ?? (await getActiveProfile());
+  const rows = await queryRows<StepSummaryRow>(
+    'SELECT * FROM step_daily_summaries WHERE user_id = ?',
+    [userId],
+  );
+
+  for (const row of rows) {
+    const stepCaloriesBurned = calculateSummaryCalories(row.step_count, activeProfile);
+    const activityCaloriesBurned = row.activity_calories_burned ?? 0;
+    const caloriesBurned = combineSummaryCalories(
+      stepCaloriesBurned,
+      activityCaloriesBurned,
+    );
+    if (
+      Math.abs((row.step_calories_burned ?? 0) - stepCaloriesBurned) < 0.05 &&
+      Math.abs((row.calories_burned ?? 0) - caloriesBurned) < 0.05
+    ) {
+      continue;
+    }
+
+    const updatedAt = getCurrentTimestamp();
+    await executeSql(
+      `UPDATE step_daily_summaries
+       SET step_calories_burned = ?, calories_burned = ?, updated_at = ?, sync_status = ?
+       WHERE id = ?`,
+      [stepCaloriesBurned, caloriesBurned, updatedAt, 'pending', row.id],
+    );
+
+    await insertSyncQueueItem(
+      userId,
+      'step_daily_summaries',
+      row.id,
+      JSON.stringify(
+        toStepSummaryRecord({
+          id: row.id,
+          userId: row.user_id,
+          localDate: row.local_date,
+          stepCount: row.step_count,
+          stepCaloriesBurned,
+          activityCaloriesBurned,
+          caloriesBurned,
+          source: row.source,
+          createdAt: row.created_at,
+          updatedAt,
+          syncStatus: 'pending',
+        }),
+      ),
+    );
+  }
 }
 
 export async function bootstrapAuthenticatedUser(user: AuthUser): Promise<void> {
   setActiveRepositoryUser(user.id);
-  await upsertUserProfile({
-    fullName: user.fullName,
-    email: user.email,
-    avatarLabel: user.avatarLabel,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-  });
 
   const claimedBy = await getMetadataValue(LEGACY_CLAIMED_BY_KEY);
   if (!claimedBy) {
@@ -1301,8 +1566,52 @@ export async function mergeRemoteStepSummaries(
       continue;
     }
 
+    const nextCaloriesBurned = Number.isFinite(entry.caloriesBurned)
+      ? entry.caloriesBurned
+      : (existing?.calories_burned ?? 0);
+    const nextStepCaloriesBurned = Number.isFinite(entry.stepCaloriesBurned)
+      ? entry.stepCaloriesBurned
+      : (existing?.step_calories_burned ?? nextCaloriesBurned);
+    const nextActivityCaloriesBurned = Number.isFinite(entry.activityCaloriesBurned)
+      ? entry.activityCaloriesBurned
+      : (existing?.activity_calories_burned ?? 0);
+
     await upsertStepSummaryRecord({
       ...entry,
+      stepCaloriesBurned: nextStepCaloriesBurned,
+      activityCaloriesBurned: nextActivityCaloriesBurned,
+      caloriesBurned: nextCaloriesBurned,
+      syncStatus: 'synced',
+    });
+    merged += 1;
+  }
+
+  return merged;
+}
+
+export async function mergeRemotePhysicalActivitySessions(
+  sessions: PhysicalActivitySession[],
+): Promise<number> {
+  let merged = 0;
+
+  for (const session of sessions) {
+    const existing = await queryFirst<PhysicalActivitySessionRow>(
+      'SELECT * FROM physical_activity_sessions WHERE id = ? AND user_id = ? LIMIT 1',
+      [session.id, getRequiredUserId()],
+    );
+    const shouldApply = await shouldApplyRemoteChange(
+      'physical_activity_sessions',
+      session.id,
+      existing?.updated_at ?? null,
+      session.updatedAt,
+    );
+
+    if (!shouldApply) {
+      continue;
+    }
+
+    await upsertPhysicalActivitySessionRecord({
+      ...session,
       syncStatus: 'synced',
     });
     merged += 1;
@@ -1405,6 +1714,15 @@ export async function listStepSummaries(): Promise<StepDailySummary[]> {
     [userId],
   );
   return rows.map(mapStepSummaryRow);
+}
+
+export async function listPhysicalActivitySessions(): Promise<PhysicalActivitySession[]> {
+  const userId = getRequiredUserId();
+  const rows = await queryRows<PhysicalActivitySessionRow>(
+    'SELECT * FROM physical_activity_sessions WHERE user_id = ? ORDER BY started_at DESC',
+    [userId],
+  );
+  return rows.map(mapPhysicalActivitySessionRow);
 }
 
 export async function listNutritionScans(): Promise<NutritionScan[]> {
@@ -1641,23 +1959,103 @@ export async function saveNutritionScan(
   return scan;
 }
 
+export async function savePhysicalActivitySession(
+  input: PhysicalActivitySessionInput,
+): Promise<PhysicalActivitySession> {
+  const userId = getRequiredUserId();
+  const activityOption = getPhysicalActivityOption(input.optionKey);
+  if (!activityOption) {
+    throw new Error('Unknown physical activity option.');
+  }
+  const timestamp = getCurrentTimestamp();
+  const session: PhysicalActivitySession = {
+    id: getScopedId('activity-session', `${Date.now()}`),
+    userId,
+    localDate: input.localDate,
+    startedAt: input.startedAt,
+    endedAt: input.endedAt,
+    category: activityOption.category,
+    optionKey: input.optionKey,
+    title: activityOption.title,
+    intensityLabel: activityOption.intensityLabel,
+    metValue: activityOption.metValue,
+    durationSeconds: input.durationSeconds,
+    caloriesBurned: input.caloriesBurned,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    syncStatus: 'pending',
+  };
+
+  await insertPhysicalActivitySession(session);
+  await insertSyncQueueItem(
+    userId,
+    'physical_activity_sessions',
+    session.id,
+    JSON.stringify(toPhysicalActivitySessionRecord(session)),
+  );
+
+  const existingSummary = await queryFirst<StepSummaryRow>(
+    'SELECT * FROM step_daily_summaries WHERE user_id = ? AND local_date = ? LIMIT 1',
+    [userId, input.localDate],
+  );
+  const stepCaloriesBurned =
+    existingSummary?.step_calories_burned ??
+    calculateSummaryCalories(existingSummary?.step_count ?? 0, await getActiveProfile());
+  const activityCaloriesBurned =
+    (existingSummary?.activity_calories_burned ?? 0) + session.caloriesBurned;
+  const updatedAt = getCurrentTimestamp();
+  const nextSummary: StepDailySummary = {
+    id: existingSummary?.id ?? getScopedId('step-summary', input.localDate),
+    userId,
+    localDate: input.localDate,
+    stepCount: existingSummary?.step_count ?? 0,
+    stepCaloriesBurned,
+    activityCaloriesBurned,
+    caloriesBurned: combineSummaryCalories(stepCaloriesBurned, activityCaloriesBurned),
+    source: existingSummary?.source ?? 'manual',
+    createdAt: existingSummary?.created_at ?? updatedAt,
+    updatedAt,
+    syncStatus: 'pending',
+  };
+
+  await upsertStepSummaryRecord(nextSummary);
+  await insertSyncQueueItem(
+    userId,
+    'step_daily_summaries',
+    nextSummary.id,
+    JSON.stringify(toStepSummaryRecord(nextSummary)),
+  );
+
+  return session;
+}
+
 export async function upsertStepSummary(
   localDate: string,
   stepCount: number,
   source: StepDailySummary['source'],
 ): Promise<void> {
   const userId = getRequiredUserId();
+  const profile = await getActiveProfile();
   const existing = await queryFirst<StepSummaryRow>(
     'SELECT * FROM step_daily_summaries WHERE user_id = ? AND local_date = ? LIMIT 1',
     [userId, localDate],
   );
   const timestamp = getCurrentTimestamp();
   const nextId = existing?.id ?? getScopedId('step-summary', localDate);
+  const stepCaloriesBurned = calculateSummaryCalories(stepCount, profile);
+  const activityCaloriesBurned = existing?.activity_calories_burned ?? 0;
+  const caloriesBurned = combineSummaryCalories(
+    stepCaloriesBurned,
+    activityCaloriesBurned,
+  );
   const nextSummary: StepDailySummary = {
     id: nextId,
     userId,
     localDate,
     stepCount,
+    stepCaloriesBurned,
+    activityCaloriesBurned,
+    caloriesBurned,
     source,
     createdAt: existing?.created_at ?? timestamp,
     updatedAt: timestamp,
@@ -1667,9 +2065,18 @@ export async function upsertStepSummary(
   if (existing) {
     await executeSql(
       `UPDATE step_daily_summaries
-      SET step_count = ?, source = ?, updated_at = ?, sync_status = ?
+      SET step_count = ?, step_calories_burned = ?, activity_calories_burned = ?, calories_burned = ?, source = ?, updated_at = ?, sync_status = ?
       WHERE id = ?`,
-      [stepCount, source, timestamp, 'pending', existing.id],
+      [
+        stepCount,
+        stepCaloriesBurned,
+        activityCaloriesBurned,
+        caloriesBurned,
+        source,
+        timestamp,
+        'pending',
+        existing.id,
+      ],
     );
   } else {
     await executeSql(
@@ -1678,16 +2085,22 @@ export async function upsertStepSummary(
         user_id,
         local_date,
         step_count,
+        step_calories_burned,
+        activity_calories_burned,
+        calories_burned,
         source,
         created_at,
         updated_at,
         sync_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         nextId,
         userId,
         localDate,
         stepCount,
+        stepCaloriesBurned,
+        activityCaloriesBurned,
+        caloriesBurned,
         source,
         timestamp,
         timestamp,
@@ -1708,16 +2121,18 @@ export async function refreshInsightSnapshots(
   enqueueForSync = false,
 ): Promise<InsightFact[]> {
   const userId = getRequiredUserId();
-  const [dailyLogs, foodEntries, stepSummaries] = await Promise.all([
+  const [dailyLogs, foodEntries, stepSummaries, activitySessions] = await Promise.all([
     listDailyLogs(),
     listFoodEntries(),
     listStepSummaries(),
+    listPhysicalActivitySessions(),
   ]);
   const facts = buildInsightFacts(
     userId,
     dailyLogs,
     foodEntries,
     stepSummaries,
+    activitySessions,
     STEP_GOAL,
   );
   await replaceInsightFacts(userId, facts);
@@ -1771,6 +2186,9 @@ export function mapStepSummariesToStepPoints(
     isoDate: new Date(`${summary.localDate}T12:00:00`).toISOString(),
     day: getWeekdayShort(summary.localDate),
     steps: summary.stepCount,
+    stepCaloriesBurned: summary.stepCaloriesBurned,
+    activityCaloriesBurned: summary.activityCaloriesBurned,
+    caloriesBurned: summary.caloriesBurned,
   }));
 }
 

@@ -60,11 +60,48 @@ create table if not exists step_daily_summaries (
   user_id text not null,
   local_date date not null,
   step_count integer not null,
+  step_calories_burned double precision not null default 0,
+  activity_calories_burned double precision not null default 0,
+  calories_burned double precision not null default 0,
   source text not null,
   created_at timestamptz not null,
   updated_at timestamptz not null,
   sync_status text not null,
   unique (user_id, local_date)
+);
+
+alter table if exists step_daily_summaries
+  add column if not exists step_calories_burned double precision not null default 0;
+
+update step_daily_summaries
+set step_calories_burned = calories_burned
+where coalesce(step_calories_burned, 0) = 0;
+
+alter table if exists step_daily_summaries
+  add column if not exists activity_calories_burned double precision not null default 0;
+
+alter table if exists step_daily_summaries
+  add column if not exists calories_burned double precision not null default 0;
+
+update step_daily_summaries
+set calories_burned = coalesce(step_calories_burned, 0) + coalesce(activity_calories_burned, 0);
+
+create table if not exists physical_activity_sessions (
+  id text primary key,
+  user_id text not null,
+  local_date date not null,
+  started_at timestamptz not null,
+  ended_at timestamptz not null,
+  category text not null,
+  option_key text not null,
+  title text not null,
+  intensity_label text not null,
+  met_value double precision not null,
+  duration_seconds integer not null,
+  calories_burned double precision not null,
+  created_at timestamptz not null,
+  updated_at timestamptz not null,
+  sync_status text not null
 );
 
 create table if not exists symptom_entries (
@@ -116,6 +153,7 @@ alter table profiles enable row level security;
 alter table daily_logs enable row level security;
 alter table food_entries enable row level security;
 alter table step_daily_summaries enable row level security;
+alter table physical_activity_sessions enable row level security;
 alter table symptom_entries enable row level security;
 alter table nutrition_scans enable row level security;
 alter table insight_snapshots enable row level security;
@@ -155,6 +193,15 @@ create policy step_daily_summaries_owner_select on step_daily_summaries for sele
 create policy step_daily_summaries_owner_insert on step_daily_summaries for insert with check (auth.uid()::text = user_id);
 create policy step_daily_summaries_owner_update on step_daily_summaries for update using (auth.uid()::text = user_id) with check (auth.uid()::text = user_id);
 create policy step_daily_summaries_owner_delete on step_daily_summaries for delete using (auth.uid()::text = user_id);
+
+drop policy if exists physical_activity_sessions_owner_select on physical_activity_sessions;
+drop policy if exists physical_activity_sessions_owner_insert on physical_activity_sessions;
+drop policy if exists physical_activity_sessions_owner_update on physical_activity_sessions;
+drop policy if exists physical_activity_sessions_owner_delete on physical_activity_sessions;
+create policy physical_activity_sessions_owner_select on physical_activity_sessions for select using (auth.uid()::text = user_id);
+create policy physical_activity_sessions_owner_insert on physical_activity_sessions for insert with check (auth.uid()::text = user_id);
+create policy physical_activity_sessions_owner_update on physical_activity_sessions for update using (auth.uid()::text = user_id) with check (auth.uid()::text = user_id);
+create policy physical_activity_sessions_owner_delete on physical_activity_sessions for delete using (auth.uid()::text = user_id);
 
 drop policy if exists symptom_entries_owner_select on symptom_entries;
 drop policy if exists symptom_entries_owner_insert on symptom_entries;

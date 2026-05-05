@@ -54,6 +54,14 @@ function getStatusFromSnapshot(
     };
   }
 
+  if (snapshot.trackingPaused) {
+    return {
+      status: 'granted',
+      statusMessage:
+        'Step tracking is paused while your timed activity is running. It will resume when you stop the timer.',
+    };
+  }
+
   if (!snapshot.serviceRunning) {
     return {
       status: 'error',
@@ -139,14 +147,14 @@ export function useStepCounter(goal: number): UseStepCounterResult {
       }
 
       try {
-        const snapshot = await startAndroidStepCounterService();
+        const serviceSnapshot = await startAndroidStepCounterService();
         if (!isMounted) {
           return;
         }
-        const nextDayKey = snapshot.sessionDate;
+        const nextDayKey = serviceSnapshot.sessionDate;
         activeDayKey.current = nextDayKey;
-        setStepsToday(snapshot.stepCount);
-        const nextStatus = getStatusFromSnapshot(snapshot);
+        setStepsToday(serviceSnapshot.stepCount);
+        const nextStatus = getStatusFromSnapshot(serviceSnapshot);
         setStatus(nextStatus.status);
         setStatusMessage(nextStatus.statusMessage);
       } catch {

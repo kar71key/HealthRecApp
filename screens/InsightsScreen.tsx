@@ -133,7 +133,8 @@ function FindingCard({
 }
 
 export function InsightsScreen(): React.JSX.Element {
-  const { logs, weeklySteps, stepGoal, foodEntries, insightFacts } = useHealthData();
+  const { logs, weeklySteps, stepGoal, foodEntries, insightFacts, profile } =
+    useHealthData();
 
   const recentLogs = useMemo(
     () =>
@@ -151,11 +152,13 @@ export function InsightsScreen(): React.JSX.Element {
     const avgSleepQuality = average(recentLogs.map(log => log.sleepQuality));
     const avgSleepHours = average(recentLogs.map(log => log.sleepHours));
     const avgSteps = average(weeklySteps.map(point => point.steps));
+    const avgCaloriesBurned = average(weeklySteps.map(point => point.caloriesBurned));
     return {
       avgWater: roundToSingleDecimal(avgWater),
       avgSleepQuality: roundToSingleDecimal(avgSleepQuality),
       avgSleepHours: roundToSingleDecimal(avgSleepHours),
       avgSteps: Math.round(avgSteps),
+      avgCaloriesBurned: Math.round(avgCaloriesBurned),
       dominantMood: getMostCommonMood(recentLogs),
     };
   }, [recentLogs, weeklySteps]);
@@ -207,6 +210,17 @@ export function InsightsScreen(): React.JSX.Element {
     [weeklySteps],
   );
 
+  const calorieBurnPoints = useMemo<MetricBarChartPoint[]>(
+    () =>
+      weeklySteps.map(point => ({
+        id: `${point.id}-calories`,
+        label: point.day,
+        value: point.caloriesBurned,
+        caption: `${Math.round(point.caloriesBurned)} kcal`,
+      })),
+    [weeklySteps],
+  );
+
   const caffeinePoints = useMemo<MetricBarChartPoint[]>(() => {
     const caffeineByDate = new Map<string, number>();
 
@@ -251,7 +265,7 @@ export function InsightsScreen(): React.JSX.Element {
   return (
     <ScreenShell
       title="Insights"
-      subtitle="Real charts and patterns derived from your saved sleep, hydration, mood, and symptom logs."
+      subtitle="Real charts and patterns derived from your saved sleep, hydration, mood, food, and activity history."
     >
       <AppCard title="7-Day Snapshot">
         <View style={styles.snapshotGrid}>
@@ -266,17 +280,23 @@ export function InsightsScreen(): React.JSX.Element {
             accent={colors.warning}
           />
           <SnapshotTile
+            label="Avg Burn"
+            value={
+              profile?.weightKg
+                ? `${averages.avgCaloriesBurned.toLocaleString()} kcal`
+                : 'Set weight'
+            }
+            accent={colors.danger}
+          />
+          <SnapshotTile
             label="Avg Sleep"
             value={formatHours(averages.avgSleepHours)}
             accent={colors.primary}
           />
-          <SnapshotTile
-            label="Avg Steps"
-            value={averages.avgSteps.toLocaleString()}
-            accent={colors.danger}
-          />
         </View>
-        <Text style={styles.chartFootnote}>Most common mood this week: {averages.dominantMood}</Text>
+        <Text style={styles.chartFootnote}>
+          Most common mood this week: {averages.dominantMood}. Average steps: {averages.avgSteps.toLocaleString()}.
+        </Text>
       </AppCard>
 
       <AppCard title="Mood and Sleep Direction">
@@ -317,6 +337,22 @@ export function InsightsScreen(): React.JSX.Element {
         />
         <Text style={styles.chartFootnote}>
           Goal benchmark: {stepGoal.toLocaleString()} steps per day.
+        </Text>
+      </AppCard>
+
+      <AppCard title="Daily Calorie Burn">
+        <Text style={styles.chartDetail}>
+          Estimated calories burned from recorded steps plus any timed activities you logged, using your saved body metrics.
+        </Text>
+        <MetricBarChart
+          points={calorieBurnPoints}
+          color="#C2410C"
+          maxValue={Math.max(100, ...calorieBurnPoints.map(point => point.value), 1)}
+        />
+        <Text style={styles.chartFootnote}>
+          {profile?.weightKg
+            ? 'Height improves stride-length estimation, while weight drives the burn estimate.'
+            : 'Add your weight in Profile to turn step history into calorie-burn estimates.'}
         </Text>
       </AppCard>
 

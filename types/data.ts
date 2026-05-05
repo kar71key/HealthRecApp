@@ -29,6 +29,19 @@ export type FoodEntrySource = 'manual' | 'fatsecret' | 'gemini';
 
 export type StepSource = 'sensor' | 'manual' | 'mock';
 
+export type PhysicalActivityCategory = 'Running' | 'Cycling' | 'Swimming';
+
+export type PhysicalActivityOptionKey =
+  | 'running-jogging'
+  | 'running-steady'
+  | 'running-sprints'
+  | 'cycling-leisure'
+  | 'cycling-road'
+  | 'cycling-intervals'
+  | 'swimming-light'
+  | 'swimming-moderate'
+  | 'swimming-vigorous';
+
 export type InsightConfidence =
   | 'early pattern'
   | 'moderate signal'
@@ -109,10 +122,36 @@ export type StepDailySummary = {
   userId: string;
   localDate: string;
   stepCount: number;
+  stepCaloriesBurned: number;
+  activityCaloriesBurned: number;
+  caloriesBurned: number;
   source: StepSource;
   createdAt: string;
   updatedAt: string;
   syncStatus: SyncStatus;
+};
+
+export type PhysicalActivitySession = {
+  id: string;
+  userId: string;
+  localDate: string;
+  startedAt: string;
+  endedAt: string;
+  category: PhysicalActivityCategory;
+  optionKey: PhysicalActivityOptionKey;
+  title: string;
+  intensityLabel: string;
+  metValue: number;
+  durationSeconds: number;
+  caloriesBurned: number;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus: SyncStatus;
+};
+
+export type ActivePhysicalActivityTimer = {
+  optionKey: PhysicalActivityOptionKey;
+  startedAt: string;
 };
 
 export type NutritionScan = {
@@ -156,6 +195,7 @@ export type SyncQueueItem = {
     | 'daily_logs'
     | 'food_entries'
     | 'step_daily_summaries'
+    | 'physical_activity_sessions'
     | 'nutrition_scans'
     | 'insight_snapshots';
   entityId: string;
@@ -194,6 +234,19 @@ export type FoodEntryInput = {
   sourceRefId?: string | null;
 };
 
+export type PhysicalActivitySessionInput = {
+  localDate: string;
+  startedAt: string;
+  endedAt: string;
+  category: PhysicalActivityCategory;
+  optionKey: PhysicalActivityOptionKey;
+  title: string;
+  intensityLabel: string;
+  metValue: number;
+  durationSeconds: number;
+  caloriesBurned: number;
+};
+
 export type NutritionScanInput = {
   title: string;
   source: FoodEntrySource;
@@ -210,5 +263,6 @@ export type AnalyticsSnapshot = {
   dailyLogs: DailyLog[];
   foodEntries: FoodEntry[];
   stepSummaries: StepDailySummary[];
+  activitySessions: PhysicalActivitySession[];
   insightFacts: InsightFact[];
 };

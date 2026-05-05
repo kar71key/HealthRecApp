@@ -21,6 +21,7 @@ data class StepCounterSnapshot(
   val serviceRunning: Boolean,
   val sensorAvailable: Boolean,
   val permissionGranted: Boolean,
+  val trackingPaused: Boolean,
 )
 
 object StepCounterStore {
@@ -35,6 +36,7 @@ object StepCounterStore {
   private const val KEY_BOOT_COUNT = "boot_count"
   private const val KEY_SENSOR_AVAILABLE = "sensor_available"
   private const val KEY_SERVICE_RUNNING = "service_running"
+  private const val KEY_TRACKING_PAUSED = "tracking_paused"
   private const val UNSET_FLOAT = -1f
 
   private fun getPrefs(context: Context): SharedPreferences =
@@ -98,6 +100,7 @@ object StepCounterStore {
         .putLong(KEY_SESSION_STARTED_AT, now)
         .putLong(KEY_LAST_UPDATED_AT, now)
         .putBoolean(KEY_SENSOR_AVAILABLE, sensorAvailable)
+        .putBoolean(KEY_TRACKING_PAUSED, false)
         .apply()
     } else if (prefs.getBoolean(KEY_SENSOR_AVAILABLE, sensorAvailable) != sensorAvailable) {
       prefs.edit().putBoolean(KEY_SENSOR_AVAILABLE, sensorAvailable).apply()
@@ -118,6 +121,7 @@ object StepCounterStore {
     var accumulated = prefs.getInt(KEY_ACCUMULATED, 0)
     var currentStepCount = prefs.getInt(KEY_CURRENT_STEP_COUNT, 0)
     var sessionStartedAt = prefs.getLong(KEY_SESSION_STARTED_AT, now)
+    val trackingPaused = prefs.getBoolean(KEY_TRACKING_PAUSED, false)
 
     if (existingSessionDate != today) {
       baseline =
@@ -142,6 +146,19 @@ object StepCounterStore {
       if (sessionStartedAt <= 0L) {
         sessionStartedAt = now
       }
+    }
+
+    if (trackingPaused) {
+      prefs.edit()
+        .putFloat(KEY_LAST_RAW_SENSOR_VALUE, rawSensorValue)
+        .putString(KEY_SESSION_DATE, today)
+        .putLong(KEY_LAST_UPDATED_AT, now)
+        .putInt(KEY_BOOT_COUNT, currentBootCount)
+        .putBoolean(KEY_SENSOR_AVAILABLE, true)
+        .putBoolean(KEY_SERVICE_RUNNING, true)
+        .apply()
+
+      return getSnapshot(context)
     }
 
     if (baseline >= 0f) {
@@ -176,7 +193,31 @@ object StepCounterStore {
       serviceRunning = prefs.getBoolean(KEY_SERVICE_RUNNING, false),
       sensorAvailable = sensorAvailable,
       permissionGranted = hasActivityPermission(context),
+      trackingPaused = prefs.getBoolean(KEY_TRACKING_PAUSED, false),
     )
+  }
+
+  fun pauseTracking(context: Context): StepCounterSnapshot {
+    ensureCurrentSession(context)
+    getPrefs(context).edit()
+      .putBoolean(KEY_TRACKING_PAUSED, true)
+      .putLong(KEY_LAST_UPDATED_AT, System.currentTimeMillis())
+      .apply()
+    return getSnapshot(context)
+  }
+
+  fun resumeTracking(context: Context): StepCounterSnapshot {
+    ensureCurrentSession(context)
+    val prefs = getPrefs(context)
+    val currentStepCount = prefs.getInt(KEY_CURRENT_STEP_COUNT, 0)
+    val lastRawSensorValue = prefs.getFloat(KEY_LAST_RAW_SENSOR_VALUE, UNSET_FLOAT)
+    prefs.edit()
+      .putBoolean(KEY_TRACKING_PAUSED, false)
+      .putInt(KEY_ACCUMULATED, currentStepCount)
+      .putFloat(KEY_BASELINE, if (lastRawSensorValue >= 0f) lastRawSensorValue else UNSET_FLOAT)
+      .putLong(KEY_LAST_UPDATED_AT, System.currentTimeMillis())
+      .apply()
+    return getSnapshot(context)
   }
 
   fun toWritableMap(snapshot: StepCounterSnapshot): WritableMap =
@@ -188,5 +229,6 @@ object StepCounterStore {
       putBoolean("serviceRunning", snapshot.serviceRunning)
       putBoolean("sensorAvailable", snapshot.sensorAvailable)
       putBoolean("permissionGranted", snapshot.permissionGranted)
+      putBoolean("trackingPaused", snapshot.trackingPaused)
     }
 }
