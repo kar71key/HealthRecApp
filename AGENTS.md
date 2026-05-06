@@ -241,14 +241,9 @@ Those files are tightly coupled.
 
 ## Current Unfinished Work
 
-- Apply the latest [`supabase/schema.sql`](C:/dev/HealthRecApp/HealthRecApp/supabase/schema.sql) to the real Supabase project so that:
-  - `physical_activity_sessions` exists remotely
-  - `step_calories_burned` exists remotely
-  - `activity_calories_burned` exists remotely
 - End-to-end verify timed physical activity sync after the schema is applied.
 - End-to-end verify timed physical activity behavior on a real Android device, including:
   - step tracking pause during the timer
   - step tracking resume after saving
   - no calorie double counting
 - iOS support for the current native step-tracking and timed-activity flow. Needs verification.
-

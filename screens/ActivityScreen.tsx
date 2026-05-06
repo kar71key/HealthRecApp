@@ -15,7 +15,6 @@ export function ActivityScreen(): React.JSX.Element {
     caloriesBurnedToday,
     profile,
     stepGoal,
-    stepProgress,
     stepStatus,
     stepStatusMessage,
     weeklySteps,
@@ -30,7 +29,7 @@ export function ActivityScreen(): React.JSX.Element {
 
   const displaySteps = useMemo(() => {
     if (stepStatus === 'granted') {
-      return stepsToday;
+      return Math.max(stepsToday, latestStepPoint?.steps ?? 0);
     }
     return latestStepPoint?.steps ?? 0;
   }, [latestStepPoint?.steps, stepStatus, stepsToday]);
@@ -56,14 +55,11 @@ export function ActivityScreen(): React.JSX.Element {
   ]);
 
   const displayProgress = useMemo(() => {
-    if (stepStatus === 'granted') {
-      return stepProgress;
-    }
     if (stepGoal <= 0) {
       return 0;
     }
     return Math.min(displaySteps / stepGoal, 1);
-  }, [displaySteps, stepGoal, stepProgress, stepStatus]);
+  }, [displaySteps, stepGoal]);
 
   const weeklyAverage = useMemo(() => {
     if (weeklySteps.length === 0) {

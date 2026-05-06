@@ -82,12 +82,16 @@ type UseStepCounterResult = {
   progress: number;
   status: PedometerStatus;
   statusMessage: string;
+  sessionDate: string | null;
+  sessionStartedAt: number | null;
 };
 
 export function useStepCounter(goal: number): UseStepCounterResult {
   const [stepsToday, setStepsToday] = useState(0);
   const [status, setStatus] = useState<PedometerStatus>('checking');
   const [statusMessage, setStatusMessage] = useState('Checking sensor status...');
+  const [sessionDate, setSessionDate] = useState<string | null>(null);
+  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
   const activeDayKey = useRef(formatDayKey(new Date()));
 
   useEffect(() => {
@@ -128,6 +132,8 @@ export function useStepCounter(goal: number): UseStepCounterResult {
         }
         activeDayKey.current = snapshot.sessionDate;
         setStepsToday(snapshot.stepCount);
+        setSessionDate(snapshot.sessionDate);
+        setSessionStartedAt(snapshot.sessionStartedAt);
         const nextStatus = getStatusFromSnapshot(snapshot);
         setStatus(nextStatus.status);
         setStatusMessage(nextStatus.statusMessage);
@@ -154,6 +160,8 @@ export function useStepCounter(goal: number): UseStepCounterResult {
         const nextDayKey = serviceSnapshot.sessionDate;
         activeDayKey.current = nextDayKey;
         setStepsToday(serviceSnapshot.stepCount);
+        setSessionDate(serviceSnapshot.sessionDate);
+        setSessionStartedAt(serviceSnapshot.sessionStartedAt);
         const nextStatus = getStatusFromSnapshot(serviceSnapshot);
         setStatus(nextStatus.status);
         setStatusMessage(nextStatus.statusMessage);
@@ -178,6 +186,8 @@ export function useStepCounter(goal: number): UseStepCounterResult {
             activeDayKey.current = nextDayKey;
           }
           setStepsToday(snapshot.stepCount);
+          setSessionDate(snapshot.sessionDate);
+          setSessionStartedAt(snapshot.sessionStartedAt);
           const nextStatus = getStatusFromSnapshot(snapshot);
           setStatus(nextStatus.status);
           setStatusMessage(nextStatus.statusMessage);
@@ -200,6 +210,8 @@ export function useStepCounter(goal: number): UseStepCounterResult {
       }
       activeDayKey.current = snapshot.sessionDate;
       setStepsToday(snapshot.stepCount);
+      setSessionDate(snapshot.sessionDate);
+      setSessionStartedAt(snapshot.sessionStartedAt);
       const nextStatus = getStatusFromSnapshot(snapshot);
       setStatus(nextStatus.status);
       setStatusMessage(nextStatus.statusMessage);
@@ -233,5 +245,7 @@ export function useStepCounter(goal: number): UseStepCounterResult {
     progress,
     status,
     statusMessage,
+    sessionDate,
+    sessionStartedAt,
   };
 }

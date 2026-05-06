@@ -31,7 +31,6 @@ export function DashboardScreen(): React.JSX.Element {
     stepsToday,
     caloriesBurnedToday,
     stepGoal,
-    stepProgress,
     logs,
     profile,
     stepStatus,
@@ -44,20 +43,17 @@ export function DashboardScreen(): React.JSX.Element {
 
   const dashboardSteps = useMemo(() => {
     if (stepStatus === 'granted') {
-      return stepsToday;
+      return Math.max(stepsToday, latestStepPoint?.steps ?? 0);
     }
     return latestStepPoint?.steps ?? 0;
   }, [latestStepPoint?.steps, stepStatus, stepsToday]);
 
   const dashboardProgress = useMemo(() => {
-    if (stepStatus === 'granted') {
-      return stepProgress;
-    }
     if (stepGoal <= 0) {
       return 0;
     }
     return Math.min(dashboardSteps / stepGoal, 1);
-  }, [dashboardSteps, stepGoal, stepProgress, stepStatus]);
+  }, [dashboardSteps, stepGoal]);
 
   const hydrationText = useMemo(() => {
     if (!latestLog) {

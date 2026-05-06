@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -161,6 +162,14 @@ type HealthDataContextValue = {
   saveNutritionScan: (input: NutritionScanInput) => Promise<void>;
 };
 
+type LiveStepCarryover = {
+  localDate: string;
+  sessionDate: string;
+  sessionStartedAt: number;
+  rawStepsAtAnchor: number;
+  totalStepsAtAnchor: number;
+};
+
 const HealthDataContext = createContext<HealthDataContextValue | null>(null);
 
 export function HealthDataProvider({
@@ -169,7 +178,14 @@ export function HealthDataProvider({
   children: React.ReactNode;
 }): React.JSX.Element {
   const { user, isLoggedIn, isReady: isAuthReady } = useAuth();
-  const { stepsToday, goal, progress, status, statusMessage } =
+  const {
+    stepsToday: rawStepsToday,
+    goal,
+    status,
+    statusMessage,
+    sessionDate: liveSessionDate,
+    sessionStartedAt: liveSessionStartedAt,
+  } =
     useStepCounter(STEP_GOAL);
   const [logForm, setLogForm] = useState<LogFormState>(createLogFormFromLog(null));
   const [logs, setLogs] = useState<SavedLog[]>([]);
@@ -187,9 +203,15 @@ export function HealthDataProvider({
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isStorageReady, setIsStorageReady] = useState(false);
+  const [liveStepCarryover, setLiveStepCarryover] = useState<LiveStepCarryover | null>(null);
   const lastForegroundSyncAtRef = useRef(0);
   const lastStepSyncAtRef = useRef(0);
   const todayLocalDate = toLocalDateString(new Date());
+  const storedTodayStepPoint = useMemo(
+    () => weeklySteps.find(point => point.isoDate.slice(0, 10) === todayLocalDate) ?? null,
+    [todayLocalDate, weeklySteps],
+  );
+  const storedTodaySteps = storedTodayStepPoint?.steps ?? 0;
 
   const refreshData = useCallback(async (recomputeInsights = false) => {
     if (!user) {
@@ -206,6 +228,7 @@ export function HealthDataProvider({
       setSyncState('idle');
       setLastSyncedAt(null);
       setSyncError(null);
+      setLiveStepCarryover(null);
       setLogForm(createLogFormFromLog(null));
       return;
     }
@@ -291,6 +314,107 @@ export function HealthDataProvider({
     await refreshData(false);
     return result;
   }, [applySyncResult, refreshData, user]);
+
+  useEffect(() => {
+    if (!user || status !== 'granted' || !liveSessionDate || liveSessionStartedAt === null) {
+      setLiveStepCarryover(null);
+      return;
+    }
+
+    setLiveStepCarryover(current => {
+      if (
+        current &&
+        current.localDate === todayLocalDate &&
+        current.sessionDate === liveSessionDate &&
+        current.sessionStartedAt === liveSessionStartedAt
+      ) {
+        const currentEffectiveTotal =
+          current.totalStepsAtAnchor +
+          Math.max(0, rawStepsToday - current.rawStepsAtAnchor);
+
+        if (storedTodaySteps > currentEffectiveTotal) {
+          return {
+            ...current,
+            totalStepsAtAnchor: storedTodaySteps,
+          };
+        }
+
+        return current;
+      }
+
+      return {
+        localDate: todayLocalDate,
+        sessionDate: liveSessionDate,
+        sessionStartedAt: liveSessionStartedAt,
+        rawStepsAtAnchor: rawStepsToday,
+        totalStepsAtAnchor: Math.max(storedTodaySteps, rawStepsToday),
+      };
+    });
+  }, [
+    liveSessionDate,
+    liveSessionStartedAt,
+    rawStepsToday,
+    status,
+    storedTodaySteps,
+    todayLocalDate,
+    user,
+  ]);
+
+  const liveSessionStepDelta = useMemo(() => {
+    if (
+      status !== 'granted' ||
+      !liveStepCarryover ||
+      liveStepCarryover.localDate !== todayLocalDate
+    ) {
+      return rawStepsToday;
+    }
+
+    return Math.max(0, rawStepsToday - liveStepCarryover.rawStepsAtAnchor);
+  }, [liveStepCarryover, rawStepsToday, status, todayLocalDate]);
+
+  const baseEffectiveStepsToday = useMemo(() => {
+    if (status !== 'granted') {
+      return rawStepsToday;
+    }
+
+    if (!liveStepCarryover || liveStepCarryover.localDate !== todayLocalDate) {
+      return rawStepsToday;
+    }
+
+    return liveStepCarryover.totalStepsAtAnchor + liveSessionStepDelta;
+  }, [
+    liveSessionStepDelta,
+    liveStepCarryover,
+    rawStepsToday,
+    status,
+    todayLocalDate,
+  ]);
+
+  const effectiveStepsToday = useMemo(() => {
+    if (status !== 'granted') {
+      return rawStepsToday;
+    }
+
+    if (storedTodaySteps > baseEffectiveStepsToday) {
+      return storedTodaySteps + liveSessionStepDelta;
+    }
+
+    return baseEffectiveStepsToday;
+  }, [
+    baseEffectiveStepsToday,
+    liveSessionStepDelta,
+    rawStepsToday,
+    status,
+    storedTodaySteps,
+  ]);
+
+  const effectiveStepProgress = useMemo(() => {
+    if (goal <= 0) {
+      return 0;
+    }
+
+    return Math.min(effectiveStepsToday / goal, 1);
+  }, [effectiveStepsToday, goal]);
 
   useEffect(() => {
     if (user || !activeActivityTimer) {
@@ -392,13 +516,13 @@ export function HealthDataProvider({
   }, [applySyncResult, isLoggedIn, isStorageReady, refreshData, user]);
 
   useEffect(() => {
-    if (!isStorageReady || !user || status !== 'granted' || stepsToday <= 0) {
+    if (!isStorageReady || !user || status !== 'granted' || rawStepsToday <= 0) {
       return;
     }
 
     const persistLiveSteps = async () => {
       const today = toLocalDateString(new Date());
-      await upsertStepSummary(today, stepsToday, 'sensor');
+      await upsertStepSummary(today, effectiveStepsToday, 'sensor');
       if (Date.now() - lastStepSyncAtRef.current >= 60_000) {
         lastStepSyncAtRef.current = Date.now();
         const syncResult = await syncHealthData(user.id, 'push');
@@ -410,7 +534,7 @@ export function HealthDataProvider({
           point => point.isoDate.slice(0, 10) === today,
         );
         const stepCaloriesBurned = estimateCaloriesBurnedFromSteps(
-          stepsToday,
+          effectiveStepsToday,
           profile?.weightKg ?? null,
           profile?.heightCm ?? null,
         );
@@ -421,7 +545,7 @@ export function HealthDataProvider({
           day: new Date(`${today}T12:00:00`).toLocaleDateString([], {
             weekday: 'short',
           }),
-          steps: stepsToday,
+          steps: effectiveStepsToday,
           stepCaloriesBurned,
           activityCaloriesBurned,
           caloriesBurned: stepCaloriesBurned + activityCaloriesBurned,
@@ -441,7 +565,16 @@ export function HealthDataProvider({
     };
 
     persistLiveSteps();
-  }, [applySyncResult, isStorageReady, profile?.heightCm, profile?.weightKg, status, stepsToday, user]);
+  }, [
+    applySyncResult,
+    effectiveStepsToday,
+    isStorageReady,
+    profile?.heightCm,
+    profile?.weightKg,
+    rawStepsToday,
+    status,
+    user,
+  ]);
 
   const setLogField = <K extends keyof LogFormState>(
     field: K,
@@ -640,16 +773,12 @@ export function HealthDataProvider({
   };
 
   const value: HealthDataContextValue = {
-    stepsToday,
+    stepsToday: effectiveStepsToday,
     caloriesBurnedToday: (() => {
-      const todaysStoredPoint = weeklySteps.find(
-        point => point.isoDate.slice(0, 10) === todayLocalDate,
-      );
-      const storedSteps = todaysStoredPoint?.steps ?? 0;
       const effectiveSteps =
         status === 'granted'
-          ? Math.max(stepsToday, storedSteps)
-          : storedSteps;
+          ? effectiveStepsToday
+          : storedTodaySteps;
 
       if (profile?.weightKg && effectiveSteps > 0) {
         return (
@@ -657,14 +786,14 @@ export function HealthDataProvider({
             effectiveSteps,
             profile.weightKg,
             profile.heightCm ?? null,
-          ) + (todaysStoredPoint?.activityCaloriesBurned ?? 0)
+          ) + (storedTodayStepPoint?.activityCaloriesBurned ?? 0)
         );
       }
 
-      return todaysStoredPoint?.caloriesBurned ?? 0;
+      return storedTodayStepPoint?.caloriesBurned ?? 0;
     })(),
     stepGoal: goal,
-    stepProgress: progress,
+    stepProgress: effectiveStepProgress,
     stepStatus: status,
     stepStatusMessage: statusMessage,
     weeklySteps,
